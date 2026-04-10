@@ -8,6 +8,9 @@ use crate::dbserver::field::Field;
 use crate::dbserver::message::{Message, MessageType};
 use crate::error::{ProDjLinkError, Result};
 
+/// Fixed transaction ID used for the setup/greeting exchange, matching Java's behavior.
+const SETUP_TRANSACTION_ID: u32 = 0xfffffffe;
+
 /// A client connection to a Pioneer CDJ's dbserver.
 #[derive(Debug)]
 pub struct Client {
@@ -77,7 +80,7 @@ impl Client {
 
         // Setup handshake: send SETUP_REQ, expect MENU_AVAILABLE.
         let setup_msg = Message::new(
-            client.next_transaction(),
+            SETUP_TRANSACTION_ID,
             MessageType::SetupReq,
             vec![Field::number(our_player_number as u32)],
         );
@@ -267,8 +270,8 @@ mod tests {
 
         let client = Client::connect(addr, 5, 3).await.unwrap();
         assert_eq!(client.target_player(), 3);
-        // Transaction 1 was used for setup, so next should be 2.
-        assert_eq!(client.next_transaction, 2);
+        // Setup uses a fixed transaction ID, so the counter stays at 1.
+        assert_eq!(client.next_transaction, 1);
 
         server.await.unwrap();
     }

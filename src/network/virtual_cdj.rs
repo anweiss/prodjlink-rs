@@ -10,7 +10,7 @@ use crate::error::{ProDjLinkError, Result};
 use crate::network::finder::DeviceFinder;
 use crate::protocol::announce::build_keep_alive;
 use crate::protocol::command;
-use crate::protocol::header::{DISCOVERY_PORT, STATUS_PORT};
+use crate::protocol::header::{BEAT_PORT, DISCOVERY_PORT, STATUS_PORT};
 
 /// Interval between keep-alive packets.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_millis(1500);
@@ -155,21 +155,29 @@ impl VirtualCdj {
     /// Enable or disable sync mode on a target device.
     pub async fn set_sync(&self, target: DeviceNumber, enable: bool) -> Result<()> {
         let packet = command::build_sync_command(self.config.device_number, target, enable);
-        self.send_command(&packet).await
+        self.send_beat_command(&packet).await
     }
 
     /// Request to become the tempo master.
     pub async fn become_master(&self) -> Result<()> {
         let packet = command::build_master_command(self.config.device_number);
+        self.send_beat_command(&packet).await
+    }
+
+    /// Send a command packet via broadcast on the status port (50002).
+    ///
+    /// Used for fader start (0x02) and load track (0x19) commands.
+    async fn send_command(&self, packet: &[u8]) -> Result<()> {
         let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
-        self.status_socket.send_to(&packet, broadcast_addr).await?;
+        self.status_socket.send_to(packet, broadcast_addr).await?;
         Ok(())
     }
 
-    /// Send a command packet via broadcast on the status port.
-    async fn send_command(&self, packet: &[u8]) -> Result<()> {
-        // In a full implementation, we'd resolve the target's IP via DeviceFinder.
-        let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
+    /// Send a command packet via broadcast on the beat port (50001).
+    ///
+    /// Used for sync control (0x2a) and master handoff (0x26) commands.
+    async fn send_beat_command(&self, packet: &[u8]) -> Result<()> {
+        let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), BEAT_PORT);
         self.status_socket.send_to(packet, broadcast_addr).await?;
         Ok(())
     }
