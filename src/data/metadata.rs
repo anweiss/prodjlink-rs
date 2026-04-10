@@ -1,4 +1,29 @@
-use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot};
+use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType};
+
+/// A searchable item with both a database ID and display label.
+/// Used for artist, album, genre, key, label, original artist, and remixer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SearchableItem {
+    /// Database ID for this item (used in dbserver queries).
+    pub id: u32,
+    /// Display label.
+    pub label: String,
+}
+
+impl SearchableItem {
+    pub fn new(id: u32, label: impl Into<String>) -> Self {
+        Self {
+            id,
+            label: label.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for SearchableItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
 
 /// A reference to a specific track on a specific player/slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,12 +53,20 @@ pub struct TrackMetadata {
     pub data_ref: DataReference,
     /// Track title.
     pub title: String,
-    /// Artist name.
-    pub artist: String,
-    /// Album title.
-    pub album: String,
+    /// Artist.
+    pub artist: SearchableItem,
+    /// Album.
+    pub album: SearchableItem,
     /// Genre.
-    pub genre: String,
+    pub genre: SearchableItem,
+    /// Musical key.
+    pub key: SearchableItem,
+    /// Record label.
+    pub label: SearchableItem,
+    /// Original artist.
+    pub original_artist: SearchableItem,
+    /// Remixer.
+    pub remixer: SearchableItem,
     /// Comment field.
     pub comment: String,
     /// Track duration in seconds.
@@ -44,12 +77,16 @@ pub struct TrackMetadata {
     pub rating: u8,
     /// Color label ID.
     pub color: Option<u8>,
-    /// Musical key.
-    pub key: String,
-    /// Artwork ID (for use with art fetcher).
-    pub artwork_id: u32,
     /// Date added to the collection.
     pub date_added: String,
+    /// Artwork ID (for use with art fetcher).
+    pub artwork_id: u32,
+    /// Release year.
+    pub year: u16,
+    /// Bit rate in kbps.
+    pub bit_rate: u32,
+    /// Track type (rekordbox, unanalyzed, etc.).
+    pub track_type: TrackType,
 }
 
 impl TrackMetadata {
@@ -58,17 +95,23 @@ impl TrackMetadata {
         Self {
             data_ref,
             title: String::new(),
-            artist: String::new(),
-            album: String::new(),
-            genre: String::new(),
+            artist: SearchableItem::new(0, ""),
+            album: SearchableItem::new(0, ""),
+            genre: SearchableItem::new(0, ""),
+            key: SearchableItem::new(0, ""),
+            label: SearchableItem::new(0, ""),
+            original_artist: SearchableItem::new(0, ""),
+            remixer: SearchableItem::new(0, ""),
             comment: String::new(),
             duration: 0,
             tempo: Bpm(0.0),
             rating: 0,
             color: None,
-            key: String::new(),
-            artwork_id: 0,
             date_added: String::new(),
+            artwork_id: 0,
+            year: 0,
+            bit_rate: 0,
+            track_type: TrackType::NoTrack,
         }
     }
 
@@ -107,18 +150,40 @@ impl TrackMetadata {
                 .and_then(|f| f.as_number().ok())
                 .unwrap_or(0);
 
+            // Helper: build a SearchableItem from the numeric ID and text label.
+            let searchable = || SearchableItem::new(num1, &text1);
+
             if let Some(mt) = item_type {
                 match mt {
-                    MenuItemType::TrackTitle => meta.title = text1,
-                    MenuItemType::Artist => meta.artist = text1,
-                    MenuItemType::AlbumTitle => meta.album = text1,
-                    MenuItemType::Genre => meta.genre = text1,
+                    MenuItemType::TrackTitle => {
+                        meta.title = text1;
+                        if let Some(art_id) = item.args.get(8).and_then(|f| f.as_number().ok()) {
+                            meta.artwork_id = art_id;
+                        }
+                    }
+                    MenuItemType::Artist => meta.artist = searchable(),
+                    MenuItemType::AlbumTitle => meta.album = searchable(),
+                    MenuItemType::Genre => meta.genre = searchable(),
+                    MenuItemType::Key => meta.key = searchable(),
+                    MenuItemType::Label => meta.label = searchable(),
+                    MenuItemType::OriginalArtist => meta.original_artist = searchable(),
+                    MenuItemType::Remixer => meta.remixer = searchable(),
                     MenuItemType::Comment => meta.comment = text1,
-                    MenuItemType::Key => meta.key = text1,
                     MenuItemType::DateAdded => meta.date_added = text1,
                     MenuItemType::Rating => meta.rating = num1 as u8,
                     MenuItemType::Tempo => meta.tempo = Bpm(num1 as f64 / 100.0),
-                    MenuItemType::ColorLabel => meta.color = Some(num1 as u8),
+                    MenuItemType::ColorNone => meta.color = None,
+                    MenuItemType::ColorPink => meta.color = Some(1),
+                    MenuItemType::ColorRed => meta.color = Some(2),
+                    MenuItemType::ColorOrange => meta.color = Some(3),
+                    MenuItemType::ColorYellow => meta.color = Some(4),
+                    MenuItemType::ColorGreen => meta.color = Some(5),
+                    MenuItemType::ColorAqua => meta.color = Some(6),
+                    MenuItemType::ColorBlue => meta.color = Some(7),
+                    MenuItemType::ColorPurple => meta.color = Some(8),
+                    MenuItemType::Duration => meta.duration = num1,
+                    MenuItemType::BitRate => meta.bit_rate = num1,
+                    MenuItemType::Year => meta.year = num1 as u16,
                     _ => {}
                 }
             }
@@ -178,17 +243,23 @@ mod tests {
     fn track_metadata_defaults() {
         let meta = TrackMetadata::new(make_data_ref());
         assert_eq!(meta.title, "");
-        assert_eq!(meta.artist, "");
-        assert_eq!(meta.album, "");
-        assert_eq!(meta.genre, "");
+        assert_eq!(meta.artist, SearchableItem::new(0, ""));
+        assert_eq!(meta.album, SearchableItem::new(0, ""));
+        assert_eq!(meta.genre, SearchableItem::new(0, ""));
+        assert_eq!(meta.key, SearchableItem::new(0, ""));
+        assert_eq!(meta.label, SearchableItem::new(0, ""));
+        assert_eq!(meta.original_artist, SearchableItem::new(0, ""));
+        assert_eq!(meta.remixer, SearchableItem::new(0, ""));
         assert_eq!(meta.comment, "");
         assert_eq!(meta.duration, 0);
         assert_eq!(meta.tempo.0, 0.0);
         assert_eq!(meta.rating, 0);
         assert!(meta.color.is_none());
-        assert_eq!(meta.key, "");
         assert_eq!(meta.artwork_id, 0);
         assert_eq!(meta.date_added, "");
+        assert_eq!(meta.year, 0);
+        assert_eq!(meta.bit_rate, 0);
+        assert_eq!(meta.track_type, TrackType::NoTrack);
         assert_eq!(meta.data_ref, make_data_ref());
     }
 
@@ -213,30 +284,42 @@ mod tests {
     #[test]
     fn from_menu_items_populates_fields() {
         let items = vec![
-            mock_menu_item(0x0001, "My Track", 0),
-            mock_menu_item(0x0002, "DJ Artist", 0),
-            mock_menu_item(0x0003, "Cool Album", 0),
-            mock_menu_item(0x0006, "House", 0),
-            mock_menu_item(0x0009, "Great track!", 0),
-            mock_menu_item(0x000e, "Am", 0),
-            mock_menu_item(0x0010, "2024-01-15", 0),
-            mock_menu_item(0x000b, "", 4),       // rating = 4
-            mock_menu_item(0x000a, "", 12800),   // tempo = 128.00 BPM
-            mock_menu_item(0x000d, "", 3),       // color = 3
+            mock_menu_item(0x0004, "My Track", 0),        // TrackTitle
+            mock_menu_item(0x0007, "DJ Artist", 10),       // Artist
+            mock_menu_item(0x0002, "Cool Album", 20),      // AlbumTitle
+            mock_menu_item(0x0006, "House", 30),           // Genre
+            mock_menu_item(0x0023, "Great track!", 0),     // Comment
+            mock_menu_item(0x000f, "Am", 40),              // Key
+            mock_menu_item(0x002e, "2024-01-15", 0),       // DateAdded
+            mock_menu_item(0x000a, "", 4),                 // Rating = 4
+            mock_menu_item(0x000d, "", 12800),             // Tempo = 128.00 BPM
+            mock_menu_item(0x0016, "", 0),                 // ColorOrange => color = 3
+            mock_menu_item(0x000e, "Cool Label", 50),      // Label
+            mock_menu_item(0x0028, "Orig Artist", 60),     // OriginalArtist
+            mock_menu_item(0x0029, "Remix Guy", 70),       // Remixer
+            mock_menu_item(0x000b, "", 240),               // Duration = 240s
+            mock_menu_item(0x0010, "", 320),               // BitRate = 320
+            mock_menu_item(0x0011, "", 2023),              // Year = 2023
         ];
 
         let meta = TrackMetadata::from_menu_items(make_data_ref(), &items);
 
         assert_eq!(meta.title, "My Track");
-        assert_eq!(meta.artist, "DJ Artist");
-        assert_eq!(meta.album, "Cool Album");
-        assert_eq!(meta.genre, "House");
+        assert_eq!(meta.artist, SearchableItem::new(10, "DJ Artist"));
+        assert_eq!(meta.album, SearchableItem::new(20, "Cool Album"));
+        assert_eq!(meta.genre, SearchableItem::new(30, "House"));
         assert_eq!(meta.comment, "Great track!");
-        assert_eq!(meta.key, "Am");
+        assert_eq!(meta.key, SearchableItem::new(40, "Am"));
         assert_eq!(meta.date_added, "2024-01-15");
         assert_eq!(meta.rating, 4);
         assert!((meta.tempo.0 - 128.0).abs() < f64::EPSILON);
         assert_eq!(meta.color, Some(3));
+        assert_eq!(meta.label, SearchableItem::new(50, "Cool Label"));
+        assert_eq!(meta.original_artist, SearchableItem::new(60, "Orig Artist"));
+        assert_eq!(meta.remixer, SearchableItem::new(70, "Remix Guy"));
+        assert_eq!(meta.duration, 240);
+        assert_eq!(meta.bit_rate, 320);
+        assert_eq!(meta.year, 2023);
     }
 
     #[test]
@@ -263,5 +346,32 @@ mod tests {
         assert_eq!(args[0].as_number().unwrap(), 8);
         assert_eq!(args[1].as_number().unwrap(), 3); // UsbSlot = 3
         assert_eq!(args[2].as_number().unwrap(), 42);
+    }
+
+    #[test]
+    fn searchable_item_new_and_eq() {
+        let a = SearchableItem::new(1, "Daft Punk");
+        let b = SearchableItem::new(1, "Daft Punk");
+        let c = SearchableItem::new(2, "Daft Punk");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a.id, 1);
+        assert_eq!(a.label, "Daft Punk");
+    }
+
+    #[test]
+    fn searchable_item_display() {
+        let item = SearchableItem::new(5, "Techno");
+        assert_eq!(format!("{item}"), "Techno");
+    }
+
+    #[test]
+    fn searchable_item_hash() {
+        use std::collections::HashSet;
+        let a = SearchableItem::new(1, "House");
+        let b = SearchableItem::new(1, "House");
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
     }
 }

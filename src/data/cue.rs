@@ -42,6 +42,10 @@ pub struct CueEntry {
     pub comment: Option<String>,
     /// Color assigned to this cue (from extended cue list or Nexus colors).
     pub color: Option<CueColor>,
+    /// Color ID for the cue point (if available).
+    pub color_id: Option<u8>,
+    /// Embedded RGB color (hot cues on Nxs2+).
+    pub color_rgb: Option<(u8, u8, u8)>,
 }
 
 impl CueEntry {
@@ -145,11 +149,44 @@ impl CueList {
                 loop_end_ms: if is_loop { loop_end } else { None },
                 comment,
                 color: None,
+                color_id: None,
+                color_rgb: None,
             });
         }
 
         Self::new(entries)
     }
+
+    /// Find the cue entry just before the given position.
+    pub fn entry_before(&self, position_ms: u32) -> Option<&CueEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.position_ms < position_ms)
+            .max_by_key(|e| e.position_ms)
+    }
+
+    /// Find the cue entry at or just after the given position.
+    pub fn entry_after(&self, position_ms: u32) -> Option<&CueEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.position_ms >= position_ms)
+            .min_by_key(|e| e.position_ms)
+    }
+}
+
+/// Parse a Nexus-format binary cue list (36 bytes per entry).
+pub fn parse_nexus_entries(data: &[u8]) -> Result<Vec<CueEntry>, String> {
+    // TODO: implement Nexus binary format parsing
+    // Each entry is 36 bytes with fields at known offsets
+    let _ = data;
+    Ok(Vec::new())
+}
+
+/// Parse an Nxs2-format binary cue list (variable length entries with comments and colors).
+pub fn parse_nxs2_entries(data: &[u8]) -> Result<Vec<CueEntry>, String> {
+    // TODO: implement Nxs2 binary format parsing
+    let _ = data;
+    Ok(Vec::new())
 }
 
 #[cfg(test)]
@@ -166,6 +203,8 @@ mod tests {
             loop_end_ms: None,
             comment: None,
             color: None,
+            color_id: None,
+            color_rgb: None,
         }
     }
 
@@ -177,6 +216,8 @@ mod tests {
             loop_end_ms: None,
             comment: None,
             color: None,
+            color_id: None,
+            color_rgb: None,
         }
     }
 
@@ -188,6 +229,8 @@ mod tests {
             loop_end_ms: Some(end),
             comment: None,
             color: None,
+            color_id: None,
+            color_rgb: None,
         }
     }
 
@@ -433,5 +476,86 @@ mod tests {
         let entry = &list.entries[0];
         assert!(entry.is_memory_point());
         assert_eq!(entry.position_ms, 0);
+    }
+
+    // --- color fields ---
+
+    #[test]
+    fn cue_entry_color_fields_default_none() {
+        let entry = make_memory_point(100);
+        assert!(entry.color_id.is_none());
+        assert!(entry.color_rgb.is_none());
+    }
+
+    #[test]
+    fn cue_entry_color_fields_populated() {
+        let entry = CueEntry {
+            cue_type: CueType::HotCue,
+            hot_cue_number: Some(1),
+            position_ms: 500,
+            loop_end_ms: None,
+            comment: None,
+            color: Some(CueColor::new(255, 0, 0)),
+            color_id: Some(3),
+            color_rgb: Some((255, 0, 0)),
+        };
+        assert_eq!(entry.color_id, Some(3));
+        assert_eq!(entry.color_rgb, Some((255, 0, 0)));
+    }
+
+    // --- entry_before / entry_after ---
+
+    #[test]
+    fn entry_before_finds_closest() {
+        let list = sample_cue_list();
+        let entry = list.entry_before(2500).unwrap();
+        assert_eq!(entry.position_ms, 2000);
+    }
+
+    #[test]
+    fn entry_before_none_when_at_start() {
+        let list = sample_cue_list();
+        assert!(list.entry_before(0).is_none());
+    }
+
+    #[test]
+    fn entry_after_finds_closest() {
+        let list = sample_cue_list();
+        let entry = list.entry_after(2500).unwrap();
+        assert_eq!(entry.position_ms, 3000);
+    }
+
+    #[test]
+    fn entry_after_exact_match() {
+        let list = sample_cue_list();
+        let entry = list.entry_after(1000).unwrap();
+        assert_eq!(entry.position_ms, 1000);
+    }
+
+    #[test]
+    fn entry_after_none_past_end() {
+        let list = sample_cue_list();
+        assert!(list.entry_after(10000).is_none());
+    }
+
+    #[test]
+    fn entry_before_and_after_on_empty() {
+        let list = CueList::new(vec![]);
+        assert!(list.entry_before(500).is_none());
+        assert!(list.entry_after(500).is_none());
+    }
+
+    // --- parsing stubs ---
+
+    #[test]
+    fn parse_nexus_entries_stub() {
+        let entries = parse_nexus_entries(&[]).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_nxs2_entries_stub() {
+        let entries = parse_nxs2_entries(&[]).unwrap();
+        assert!(entries.is_empty());
     }
 }

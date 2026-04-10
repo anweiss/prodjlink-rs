@@ -3,3 +3,5 @@ pub mod beatgrid;
 pub mod cue;
 pub mod metadata;
 pub mod waveform;
+
+pub use metadata::SearchableItem;

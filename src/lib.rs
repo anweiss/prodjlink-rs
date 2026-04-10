@@ -34,7 +34,7 @@ pub use network::virtual_cdj::{VirtualCdj, VirtualCdjConfig};
 pub use data::artwork::{AlbumArt, ArtworkReference, ImageFormat};
 pub use data::beatgrid::{BeatGrid, BeatGridEntry};
 pub use data::cue::{CueColor, CueEntry, CueList, CueType};
-pub use data::metadata::{DataReference, TrackMetadata};
+pub use data::metadata::{DataReference, SearchableItem, TrackMetadata};
 pub use data::waveform::{WaveformDetail, WaveformPreview, WaveformStyle};
 
 // DBServer
