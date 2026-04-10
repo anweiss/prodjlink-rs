@@ -60,6 +60,7 @@ impl From<u8> for PacketType {
             0x04 => PacketType::DeviceClaimStage3,
             0x06 => PacketType::DeviceKeepAlive,
             0x0a => PacketType::DeviceHello,
+            0x0b => PacketType::PrecisePosition,
             0x28 => PacketType::Beat,
             0x29 => PacketType::MixerStatus,
             other => PacketType::Unknown(other),

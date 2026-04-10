@@ -188,16 +188,25 @@ impl From<u8> for TrackType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PlayState {
-    Empty,
+    /// No track has been loaded (0x00).
+    NoTrack,
+    /// A track is being loaded (0x02).
     Loading,
-    Loaded,
+    /// Playing normally (0x03).
     Playing,
+    /// Playing a loop (0x04).
     Looping,
+    /// Paused anywhere other than the cue point (0x05).
     Paused,
-    CuedUp,
-    Cueing,
+    /// Paused at the cue point (0x06).
+    Cued,
+    /// Cue play in progress — playback while cue button held (0x07).
+    CuePlaying,
+    /// Cue scratch — returns to cue point when jog wheel released (0x08).
+    CueScratch,
+    /// Searching forwards or backwards (0x09).
     Searching,
-    SpunDown,
+    /// Reached end of track and stopped (0x11).
     Ended,
     Unknown(u8),
 }
@@ -205,16 +214,15 @@ pub enum PlayState {
 impl From<u8> for PlayState {
     fn from(n: u8) -> Self {
         match n {
-            0x00 => Self::Empty,
+            0x00 => Self::NoTrack,
             0x02 => Self::Loading,
-            0x03 => Self::Loaded,
-            0x04 => Self::Playing,
-            0x05 => Self::Looping,
-            0x06 => Self::Paused,
-            0x07 => Self::CuedUp,
-            0x08 => Self::Cueing,
+            0x03 => Self::Playing,
+            0x04 => Self::Looping,
+            0x05 => Self::Paused,
+            0x06 => Self::Cued,
+            0x07 => Self::CuePlaying,
+            0x08 => Self::CueScratch,
             0x09 => Self::Searching,
-            0x0e => Self::SpunDown,
             0x11 => Self::Ended,
             _ => Self::Unknown(n),
         }

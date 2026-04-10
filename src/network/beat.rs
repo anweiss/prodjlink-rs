@@ -47,10 +47,7 @@ impl BeatFinder {
                                 PacketType::Beat => {
                                     parse_beat(data).ok().map(BeatEvent::NewBeat)
                                 }
-                                // parse_header returns Unknown(0x7f) for precise
-                                // position packets since the From<u8> impl doesn't
-                                // have an explicit arm for 0x7f yet.
-                                PacketType::PrecisePosition | PacketType::Unknown(0x7f) => {
+                                PacketType::PrecisePosition => {
                                     parse_precise_position(data)
                                         .ok()
                                         .map(BeatEvent::PrecisePosition)
@@ -90,7 +87,7 @@ mod tests {
     fn beat_event_enum_construction() {
         use std::time::Instant;
 
-        use crate::device::types::{BeatNumber, Bpm, DeviceNumber, DeviceType, Pitch};
+        use crate::device::types::{Bpm, DeviceNumber, DeviceType, Pitch};
 
         let beat = Beat {
             name: "CDJ-3000".into(),
@@ -105,11 +102,12 @@ mod tests {
         assert!(matches!(evt, BeatEvent::NewBeat(_)));
 
         let pp = PrecisePosition {
+            name: "CDJ-3000".into(),
             device_number: DeviceNumber(2),
+            track_length: 300,
             position_ms: 1000,
-            bpm: Bpm(140.0),
-            beat_number: BeatNumber(42),
-            playing: true,
+            pitch: Pitch(0x100000),
+            effective_bpm: Bpm(140.0),
             timestamp: Instant::now(),
         };
         let evt = BeatEvent::PrecisePosition(pp);
@@ -135,18 +133,18 @@ mod tests {
         pkt[0x21] = device_num;
         pkt[0x23] = 0x01; // CDJ
         pkt[0x5a..0x5c].copy_from_slice(&bpm_hundredths.to_be_bytes());
-        pkt[0x5f] = 3; // beat 3 of 4
+        pkt[0x5c] = 3; // beat 3 of 4
         pkt
     }
 
     /// Build a minimal precise-position packet for the loopback test.
     fn make_precise_position_packet(device_num: u8) -> Vec<u8> {
-        let mut pkt = vec![0u8; 0x35];
+        let mut pkt = vec![0u8; 0x3c]; // exact size
         pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
-        pkt[0x0a] = 0x7f;
+        pkt[0x0a] = 0x0b; // PrecisePosition type
         pkt[0x21] = device_num;
-        pkt[0x27] = 1; // playing
-        pkt[0x2c..0x2e].copy_from_slice(&12500u16.to_be_bytes());
+        // BPM at 0x38 (4 bytes): 1250 → 125.0 effective BPM
+        pkt[0x38..0x3c].copy_from_slice(&1250u32.to_be_bytes());
         pkt
     }
 
@@ -207,8 +205,7 @@ mod tests {
         match evt {
             BeatEvent::PrecisePosition(pp) => {
                 assert_eq!(pp.device_number, crate::device::types::DeviceNumber(4));
-                assert!(pp.playing);
-                assert!((pp.bpm.0 - 125.0).abs() < f64::EPSILON);
+                assert!((pp.effective_bpm.0 - 125.0).abs() < f64::EPSILON);
             }
             other => panic!("expected PrecisePosition, got {:?}", other),
         }

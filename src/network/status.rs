@@ -98,13 +98,18 @@ mod tests {
             is_playing: true,
             is_master: false,
             is_synced: true,
+            is_bpm_synced: false,
             is_on_air: true,
             bpm: crate::device::types::Bpm(128.0),
             pitch: crate::device::types::Pitch(0x100000),
-            beat_number: crate::device::types::BeatNumber(1),
+            beat_number: Some(crate::device::types::BeatNumber(1)),
             beat_within_bar: 1,
-            firmware_version: "1A".to_string(),
+            firmware_version: "1A01".to_string(),
             sync_number: 0,
+            master_hand_off: None,
+            loop_start: None,
+            loop_end: None,
+            loop_beats: None,
             timestamp: Instant::now(),
         })
     }
@@ -113,7 +118,12 @@ mod tests {
         DeviceUpdate::Mixer(MixerStatus {
             name: format!("DJM-{num}"),
             device_number: DeviceNumber(num),
-            channels_on_air: vec![true, false, true, true],
+            bpm: crate::device::types::Bpm(128.0),
+            pitch: crate::device::types::Pitch(0x100000),
+            beat_within_bar: 1,
+            is_master: true,
+            is_synced: true,
+            master_hand_off: None,
             timestamp: Instant::now(),
         })
     }
