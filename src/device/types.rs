@@ -230,6 +230,62 @@ impl From<u8> for PlayState {
 }
 
 // ---------------------------------------------------------------------------
+// PlayState2
+// ---------------------------------------------------------------------------
+
+/// Secondary play state indicating motion (byte at offset 0x8b in CDJ status).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlayState2 {
+    /// Player is moving (playing/searching).
+    Moving,
+    /// Player is stopped.
+    Stopped,
+    /// Unknown value.
+    Unknown(u8),
+}
+
+impl From<u8> for PlayState2 {
+    fn from(n: u8) -> Self {
+        match n {
+            0x6a | 0x7a | 0xfa => Self::Moving,
+            0x6e | 0x7e | 0xfe => Self::Stopped,
+            _ => Self::Unknown(n),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PlayState3
+// ---------------------------------------------------------------------------
+
+/// Tertiary play state indicating jog mode and direction (byte at offset 0x9d).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PlayState3 {
+    /// No track is loaded.
+    NoTrack,
+    /// Player is paused or playing in reverse.
+    PausedOrReverse,
+    /// Playing forward in vinyl jog mode.
+    ForwardVinyl,
+    /// Playing forward in CDJ jog mode.
+    ForwardCdj,
+    /// Unknown value.
+    Unknown(u8),
+}
+
+impl From<u8> for PlayState3 {
+    fn from(n: u8) -> Self {
+        match n {
+            0x00 => Self::NoTrack,
+            0x01 => Self::PausedOrReverse,
+            0x09 => Self::ForwardVinyl,
+            0x0d => Self::ForwardCdj,
+            _ => Self::Unknown(n),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OnAirStatus
 // ---------------------------------------------------------------------------
 

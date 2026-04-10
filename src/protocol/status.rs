@@ -28,6 +28,8 @@ const FIRMWARE_LEN: usize = 4;
 const PLAY_STATE_OFFSET: usize = 0x7b;
 const SYNC_NUMBER_OFFSET: usize = 0x84;
 const FLAGS_OFFSET: usize = 0x89;
+const PLAY_STATE_2_OFFSET: usize = 0x8b;
+const PLAY_STATE_3_OFFSET: usize = 0x9d;
 /// Pitch (3 bytes at 0x8d — "Pitch₁" in protocol docs)
 const PITCH_OFFSET: usize = 0x8d;
 const PITCH_LEN: usize = 3;
@@ -36,6 +38,13 @@ const BPM_OFFSET: usize = 0x92;
 const MASTER_HAND_OFF_OFFSET: usize = 0x9f;
 const BEAT_NUMBER_OFFSET: usize = 0xa0;
 const BEAT_WITHIN_BAR_OFFSET: usize = 0xa6;
+const IS_BUSY_OFFSET: usize = 0x27;
+const TRACK_NUMBER_OFFSET: usize = 0x32;
+const LOCAL_USB_STATE_OFFSET: usize = 0x6f;
+const LOCAL_SD_STATE_OFFSET: usize = 0x73;
+const LINK_MEDIA_AVAILABLE_OFFSET: usize = 0x75;
+const CUE_COUNTDOWN_OFFSET: usize = 0xa4;
+const PACKET_NUMBER_OFFSET: usize = 0xc8;
 
 // CDJ-3000 loop field offsets
 const LOOP_START_OFFSET: usize = 0x1b6;
@@ -77,10 +86,14 @@ pub struct CdjStatus {
     pub track_type: TrackType,
     /// Rekordbox database ID of the loaded track, or 0 if none.
     pub rekordbox_id: u32,
-    /// Current play state.
+    /// Current play state (byte at 0x7b).
     pub play_state: PlayState,
-    /// Whether the player is actively playing audio.
-    pub is_playing: bool,
+    /// Secondary play state indicating motion (byte at 0x8b).
+    pub play_state_2: PlayState2,
+    /// Tertiary play state indicating jog mode and direction (byte at 0x9d).
+    pub play_state_3: PlayState3,
+    /// Raw playing flag bit from the flags byte.
+    pub is_playing_flag: bool,
     /// Whether this player is the current tempo master.
     pub is_master: bool,
     /// Whether sync mode is enabled.
@@ -109,7 +122,92 @@ pub struct CdjStatus {
     pub loop_end: Option<u64>,
     /// CDJ-3000 loop length in beats, if available.
     pub loop_beats: Option<u16>,
+    /// Total packet length (used for pre-nexus fallback in `is_playing()`).
+    pub packet_length: usize,
+    /// Whether the player is currently busy (loading, etc).
+    pub is_busy: bool,
+    /// The track number on disc media.
+    pub track_number: u16,
+    /// Cue countdown (beats until next cue point, `None` = no upcoming cue).
+    pub cue_countdown: Option<u16>,
+    /// Packet sequence number.
+    pub packet_number: u32,
+    /// Raw USB slot state byte at 0x6f (0 = empty, 4 = loaded).
+    pub local_usb_state: u8,
+    /// Raw SD slot state byte at 0x73 (0 = empty, 4 = loaded).
+    pub local_sd_state: u8,
+    /// Whether link media is available from another player.
+    pub link_media_available: bool,
     pub timestamp: Instant,
+}
+
+impl CdjStatus {
+    /// Whether the player is actively playing audio.
+    ///
+    /// For nexus-era packets (≥ 0xd4 bytes) this uses the flag bit at 0x89.
+    /// For pre-nexus packets the flag byte is unreliable so we fall back to
+    /// checking PlayState == Playing **and** PlayState2 == Moving.
+    pub fn is_playing(&self) -> bool {
+        if self.packet_length >= 0xd4 {
+            self.is_playing_flag
+        } else {
+            self.play_state == PlayState::Playing && self.play_state_2 == PlayState2::Moving
+        }
+    }
+
+    /// Playing in the forward direction.
+    pub fn is_playing_forwards(&self) -> bool {
+        self.play_state == PlayState::Playing && self.play_state_3 != PlayState3::PausedOrReverse
+    }
+
+    /// Playing in reverse.
+    pub fn is_playing_backwards(&self) -> bool {
+        self.play_state == PlayState::Playing && self.play_state_3 == PlayState3::PausedOrReverse
+    }
+
+    pub fn is_looping(&self) -> bool {
+        self.play_state == PlayState::Looping
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.play_state == PlayState::Paused
+    }
+
+    pub fn is_cued(&self) -> bool {
+        self.play_state == PlayState::Cued
+    }
+
+    pub fn is_searching(&self) -> bool {
+        self.play_state == PlayState::Searching
+    }
+
+    pub fn is_at_end(&self) -> bool {
+        self.play_state == PlayState::Ended
+    }
+
+    pub fn is_track_loaded(&self) -> bool {
+        self.play_state != PlayState::NoTrack
+    }
+
+    /// Whether a USB drive is loaded and ready in the local slot.
+    pub fn is_local_usb_loaded(&self) -> bool {
+        self.local_usb_state == 4
+    }
+
+    /// Whether the local USB slot is empty.
+    pub fn is_local_usb_empty(&self) -> bool {
+        self.local_usb_state == 0
+    }
+
+    /// Whether an SD card is loaded and ready in the local slot.
+    pub fn is_local_sd_loaded(&self) -> bool {
+        self.local_sd_state == 4
+    }
+
+    /// Whether the local SD slot is empty.
+    pub fn is_local_sd_empty(&self) -> bool {
+        self.local_sd_state == 0
+    }
 }
 
 /// Mixer status update (verified against MixerStatus.java).
@@ -158,11 +256,14 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
     let play_state = PlayState::from(data[PLAY_STATE_OFFSET]);
 
     let flags = data[FLAGS_OFFSET];
-    let is_playing = flags & FLAG_PLAYING != 0;
+    let is_playing_flag = flags & FLAG_PLAYING != 0;
     let is_master = flags & FLAG_MASTER != 0;
     let is_synced = flags & FLAG_SYNCED != 0;
     let is_bpm_synced = flags & FLAG_BPM_SYNC != 0;
     let is_on_air = flags & FLAG_ON_AIR != 0;
+
+    let play_state_2 = PlayState2::from(data[PLAY_STATE_2_OFFSET]);
+    let play_state_3 = PlayState3::from(data[PLAY_STATE_3_OFFSET]);
 
     let firmware_version = read_device_name(data, FIRMWARE_OFFSET, FIRMWARE_LEN);
     let sync_number = bytes_to_number(data, SYNC_NUMBER_OFFSET, 4);
@@ -198,6 +299,31 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
         (None, None, None)
     };
 
+    let is_busy = data[IS_BUSY_OFFSET] != 0;
+    let track_number =
+        u16::from_be_bytes([data[TRACK_NUMBER_OFFSET], data[TRACK_NUMBER_OFFSET + 1]]);
+
+    let cue_countdown = {
+        let raw =
+            u16::from_be_bytes([data[CUE_COUNTDOWN_OFFSET], data[CUE_COUNTDOWN_OFFSET + 1]]);
+        if raw == 0x01FF { None } else { Some(raw) }
+    };
+
+    let packet_number = if data.len() >= PACKET_NUMBER_OFFSET + 4 {
+        u32::from_be_bytes([
+            data[PACKET_NUMBER_OFFSET],
+            data[PACKET_NUMBER_OFFSET + 1],
+            data[PACKET_NUMBER_OFFSET + 2],
+            data[PACKET_NUMBER_OFFSET + 3],
+        ])
+    } else {
+        0
+    };
+
+    let local_usb_state = data[LOCAL_USB_STATE_OFFSET];
+    let local_sd_state = data[LOCAL_SD_STATE_OFFSET];
+    let link_media_available = data[LINK_MEDIA_AVAILABLE_OFFSET] != 0;
+
     Ok(CdjStatus {
         name,
         device_number,
@@ -207,7 +333,9 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
         track_type,
         rekordbox_id,
         play_state,
-        is_playing,
+        play_state_2,
+        play_state_3,
+        is_playing_flag,
         is_master,
         is_synced,
         is_bpm_synced,
@@ -222,6 +350,14 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
         loop_start,
         loop_end,
         loop_beats,
+        packet_length: data.len(),
+        is_busy,
+        track_number,
+        cue_countdown,
+        packet_number,
+        local_usb_state,
+        local_sd_state,
+        link_media_available,
         timestamp: Instant::now(),
     })
 }
@@ -290,8 +426,9 @@ mod tests {
     use crate::util::number_to_bytes;
 
     /// Build a synthetic CDJ status packet with correct offsets.
+    /// Sized at 0xd4 bytes (nexus-era) so `is_playing()` uses the flag.
     fn make_cdj_packet() -> Vec<u8> {
-        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let mut pkt = vec![0u8; 0xd4];
         pkt[..10].copy_from_slice(&MAGIC_HEADER);
         pkt[0x0a] = 0x0a; // CdjStatus type byte
 
@@ -337,6 +474,15 @@ mod tests {
 
         // Master hand-off = none (0xFF)
         pkt[MASTER_HAND_OFF_OFFSET] = NO_HAND_OFF;
+
+        // Play state 2 = Moving (0x6a)
+        pkt[PLAY_STATE_2_OFFSET] = 0x6a;
+        // Play state 3 = ForwardCdj (0x0d)
+        pkt[PLAY_STATE_3_OFFSET] = 0x0d;
+
+        // cue_countdown = sentinel (no upcoming cue)
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x01;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0xFF;
 
         pkt
     }
@@ -400,7 +546,7 @@ mod tests {
         let pkt = make_cdj_packet();
         let s = parse_cdj_status(&pkt).unwrap();
 
-        assert!(s.is_playing);
+        assert!(s.is_playing());
         assert!(!s.is_master);
         assert!(s.is_synced);
         assert!(s.is_on_air);
@@ -413,7 +559,7 @@ mod tests {
         pkt[FLAGS_OFFSET] = FLAG_MASTER;
 
         let s = parse_cdj_status(&pkt).unwrap();
-        assert!(!s.is_playing);
+        assert!(!s.is_playing());
         assert!(s.is_master);
         assert!(!s.is_synced);
         assert!(!s.is_on_air);
@@ -425,7 +571,7 @@ mod tests {
         pkt[FLAGS_OFFSET] = FLAG_PLAYING | FLAG_MASTER | FLAG_SYNCED | FLAG_ON_AIR | FLAG_BPM_SYNC;
 
         let s = parse_cdj_status(&pkt).unwrap();
-        assert!(s.is_playing);
+        assert!(s.is_playing());
         assert!(s.is_master);
         assert!(s.is_synced);
         assert!(s.is_on_air);
@@ -564,5 +710,169 @@ mod tests {
         pkt[0] = 0x00;
         let err = parse_status(&pkt).unwrap_err();
         assert!(matches!(err, ProDjLinkError::InvalidMagic));
+    }
+
+    // -- PlayState2 conversion tests --
+
+    #[test]
+    fn play_state_2_moving_variants() {
+        assert_eq!(PlayState2::from(0x6a), PlayState2::Moving);
+        assert_eq!(PlayState2::from(0x7a), PlayState2::Moving);
+        assert_eq!(PlayState2::from(0xfa), PlayState2::Moving);
+    }
+
+    #[test]
+    fn play_state_2_stopped_variants() {
+        assert_eq!(PlayState2::from(0x6e), PlayState2::Stopped);
+        assert_eq!(PlayState2::from(0x7e), PlayState2::Stopped);
+        assert_eq!(PlayState2::from(0xfe), PlayState2::Stopped);
+    }
+
+    #[test]
+    fn play_state_2_unknown() {
+        assert_eq!(PlayState2::from(0x01), PlayState2::Unknown(0x01));
+    }
+
+    // -- PlayState3 conversion tests --
+
+    #[test]
+    fn play_state_3_known_values() {
+        assert_eq!(PlayState3::from(0x00), PlayState3::NoTrack);
+        assert_eq!(PlayState3::from(0x01), PlayState3::PausedOrReverse);
+        assert_eq!(PlayState3::from(0x09), PlayState3::ForwardVinyl);
+        assert_eq!(PlayState3::from(0x0d), PlayState3::ForwardCdj);
+    }
+
+    #[test]
+    fn play_state_3_unknown() {
+        assert_eq!(PlayState3::from(0xff), PlayState3::Unknown(0xff));
+    }
+
+    // -- is_playing() nexus vs pre-nexus --
+
+    #[test]
+    fn is_playing_nexus_uses_flag() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length >= 0xd4);
+        assert!(s.is_playing_flag);
+        assert!(s.is_playing());
+    }
+
+    #[test]
+    fn is_playing_nexus_flag_cleared() {
+        let mut pkt = make_cdj_packet();
+        pkt[FLAGS_OFFSET] = FLAG_MASTER; // playing flag cleared
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_playing_flag);
+        assert!(!s.is_playing());
+    }
+
+    #[test]
+    fn is_playing_pre_nexus_fallback_playing_moving() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0; // clear flag
+        pkt[PLAY_STATE_OFFSET] = 0x03; // Playing
+        pkt[PLAY_STATE_2_OFFSET] = 0x6a; // Moving
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(!s.is_playing_flag);
+        assert!(s.is_playing()); // fallback: Playing + Moving
+    }
+
+    #[test]
+    fn is_playing_pre_nexus_fallback_playing_stopped() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = FLAG_PLAYING; // flag set but ignored
+        pkt[PLAY_STATE_OFFSET] = 0x03; // Playing
+        pkt[PLAY_STATE_2_OFFSET] = 0x6e; // Stopped
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(!s.is_playing()); // fallback: Playing + Stopped → false
+    }
+
+    // -- Convenience method tests --
+
+    #[test]
+    fn cdj_status_convenience_methods() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_playing_forwards());
+        assert!(!s.is_playing_backwards());
+        assert!(!s.is_looping());
+        assert!(!s.is_paused());
+        assert!(!s.is_cued());
+        assert!(!s.is_searching());
+        assert!(!s.is_at_end());
+        assert!(s.is_track_loaded());
+    }
+
+    #[test]
+    fn cdj_status_playing_backwards() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_3_OFFSET] = 0x01; // PausedOrReverse
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_playing_backwards());
+        assert!(!s.is_playing_forwards());
+    }
+
+    #[test]
+    fn cdj_status_looping() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x04;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_looping());
+    }
+
+    #[test]
+    fn cdj_status_paused() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x05;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_paused());
+    }
+
+    #[test]
+    fn cdj_status_cued() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x06;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_cued());
+    }
+
+    #[test]
+    fn cdj_status_searching() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x09;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_searching());
+    }
+
+    #[test]
+    fn cdj_status_at_end() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x11;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_at_end());
+    }
+
+    #[test]
+    fn cdj_status_no_track_loaded() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_OFFSET] = 0x00;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_track_loaded());
+    }
+
+    #[test]
+    fn cdj_status_play_state_2_and_3() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.play_state_2, PlayState2::Moving);
+        assert_eq!(s.play_state_3, PlayState3::ForwardCdj);
     }
 }

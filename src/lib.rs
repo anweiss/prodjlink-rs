@@ -14,8 +14,8 @@ pub mod util;
 
 // Core types
 pub use device::types::{
-    BeatNumber, Bpm, DeviceNumber, DeviceType, OnAirStatus, Pitch, PlayState, TrackSourceSlot,
-    TrackType,
+    BeatNumber, Bpm, DeviceNumber, DeviceType, OnAirStatus, Pitch, PlayState, PlayState2,
+    PlayState3, TrackSourceSlot, TrackType,
 };
 pub use error::{ProDjLinkError, Result};
 
