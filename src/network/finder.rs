@@ -143,6 +143,9 @@ mod tests {
             device_type: DeviceType::Cdj,
             mac_address: [0; 6],
             ip_address: Ipv4Addr::LOCALHOST,
+            peer_count: 0,
+            is_opus_quad: false,
+            is_xdj_az: false,
             last_seen: Instant::now(),
         };
 
@@ -159,6 +162,9 @@ mod tests {
             device_type: DeviceType::Mixer,
             mac_address: [1, 2, 3, 4, 5, 6],
             ip_address: Ipv4Addr::new(10, 0, 0, 1),
+            peer_count: 0,
+            is_opus_quad: false,
+            is_xdj_az: false,
             last_seen: Instant::now(),
         };
         let event = FinderEvent::DeviceFound(ann);

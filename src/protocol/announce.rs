@@ -6,16 +6,18 @@ use crate::error::{ProDjLinkError, Result};
 use crate::protocol::header::{PacketType, MAGIC_HEADER, PACKET_TYPE_OFFSET};
 use crate::util::{bytes_to_ipv4, bytes_to_mac, read_device_name};
 
-/// Minimum size for a keep-alive packet (through IP address at 0x2a..0x2e).
-const KEEP_ALIVE_MIN_SIZE: usize = 0x2e;
+/// Required size for a keep-alive packet (Java requires exactly 0x36 bytes).
+const KEEP_ALIVE_MIN_SIZE: usize = 0x36;
 
-// Keep-alive field offsets
+// Keep-alive field offsets (distinct from status-packet offsets on port 50002)
 const NAME_OFFSET: usize = 0x0c;
 const NAME_MAX_LEN: usize = 20;
-const DEVICE_NUMBER_OFFSET: usize = 0x21;
-const DEVICE_TYPE_OFFSET: usize = 0x23;
-const MAC_OFFSET: usize = 0x24;
-const IP_OFFSET: usize = 0x2a;
+const DEVICE_NUMBER_OFFSET: usize = 0x24;
+const DEVICE_TYPE_OFFSET: usize = 0x25;
+const MAC_OFFSET: usize = 0x26;
+const IP_OFFSET: usize = 0x2c;
+const PEER_COUNT_OFFSET: usize = 0x30;
+const DEVICE_TYPE_MIRROR_OFFSET: usize = 0x34;
 
 /// Total size of a keep-alive packet we build.
 const KEEP_ALIVE_PACKET_SIZE: usize = 0x36;
@@ -33,6 +35,12 @@ pub struct DeviceAnnouncement {
     pub mac_address: [u8; 6],
     /// IP address of the device.
     pub ip_address: Ipv4Addr,
+    /// Number of peers the device can see on the network.
+    pub peer_count: u8,
+    /// Whether this device is an Opus Quad (all-in-one unit).
+    pub is_opus_quad: bool,
+    /// Whether this device is an XDJ-AZ.
+    pub is_xdj_az: bool,
     /// When this announcement was last received.
     pub last_seen: Instant,
 }
@@ -58,6 +66,9 @@ pub fn parse_keep_alive(data: &[u8]) -> Result<DeviceAnnouncement> {
     let device_type = DeviceType::from(data[DEVICE_TYPE_OFFSET]);
     let mac_address = bytes_to_mac(data, MAC_OFFSET);
     let ip_address = bytes_to_ipv4(data, IP_OFFSET);
+    let peer_count = data[PEER_COUNT_OFFSET];
+    let is_opus_quad = name == "OPUS-QUAD";
+    let is_xdj_az = name == "XDJ-AZ";
 
     Ok(DeviceAnnouncement {
         name,
@@ -65,6 +76,9 @@ pub fn parse_keep_alive(data: &[u8]) -> Result<DeviceAnnouncement> {
         device_type,
         mac_address,
         ip_address,
+        peer_count,
+        is_opus_quad,
+        is_xdj_az,
         last_seen: Instant::now(),
     })
 }
@@ -83,25 +97,28 @@ pub fn build_keep_alive(
     // Magic header
     pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
 
-    // Packet type
+    // Packet type (0x06); byte 0x0b stays 0x00
     pkt[PACKET_TYPE_OFFSET] = 0x06;
-
-    // Name length field (byte 0x0b) — name subtype marker used by protocol
-    pkt[0x0b] = NAME_MAX_LEN as u8;
 
     // Device name (null-padded to NAME_MAX_LEN bytes)
     let name_bytes = name.as_bytes();
     let copy_len = name_bytes.len().min(NAME_MAX_LEN);
     pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
 
-    // Packet structure length marker at 0x20
+    // Structure marker and keep-alive subtype
     pkt[0x20] = 0x01;
+    pkt[0x21] = 0x02;
+
+    // Packet length as u16 BE
+    let len_bytes = (KEEP_ALIVE_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
 
     // Device number
     pkt[DEVICE_NUMBER_OFFSET] = device_number.0;
 
     // Device type — always CDJ for a virtual player
     pkt[DEVICE_TYPE_OFFSET] = u8::from(DeviceType::Cdj);
+    pkt[DEVICE_TYPE_MIRROR_OFFSET] = u8::from(DeviceType::Cdj);
 
     // MAC address
     pkt[MAC_OFFSET..MAC_OFFSET + 6].copy_from_slice(&mac_address);
@@ -117,7 +134,7 @@ pub fn build_keep_alive(
 mod tests {
     use super::*;
 
-    /// Build a minimal valid keep-alive packet by hand for testing.
+    /// Build a valid keep-alive packet by hand for testing.
     fn make_keep_alive_packet(
         name: &str,
         device_num: u8,
@@ -131,8 +148,13 @@ mod tests {
         let nb = name.as_bytes();
         let copy_len = nb.len().min(NAME_MAX_LEN);
         pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&nb[..copy_len]);
+        pkt[0x20] = 0x01;
+        pkt[0x21] = 0x02;
+        let len_bytes = (KEEP_ALIVE_PACKET_SIZE as u16).to_be_bytes();
+        pkt[0x22..0x24].copy_from_slice(&len_bytes);
         pkt[DEVICE_NUMBER_OFFSET] = device_num;
         pkt[DEVICE_TYPE_OFFSET] = device_type;
+        pkt[DEVICE_TYPE_MIRROR_OFFSET] = device_type;
         pkt[MAC_OFFSET..MAC_OFFSET + 6].copy_from_slice(&mac);
         pkt[IP_OFFSET..IP_OFFSET + 4].copy_from_slice(&ip);
         pkt
@@ -150,6 +172,8 @@ mod tests {
         assert_eq!(ann.device_type, DeviceType::Cdj);
         assert_eq!(ann.mac_address, mac);
         assert_eq!(ann.ip_address, Ipv4Addr::new(192, 168, 1, 42));
+        assert!(!ann.is_opus_quad);
+        assert!(!ann.is_xdj_az);
     }
 
     #[test]
@@ -167,6 +191,23 @@ mod tests {
         assert_eq!(ann.device_type, DeviceType::Cdj);
         assert_eq!(ann.mac_address, mac);
         assert_eq!(ann.ip_address, ip);
+    }
+
+    #[test]
+    fn round_trip_build_byte_layout() {
+        let pkt = build_keep_alive(
+            "TestCDJ",
+            DeviceNumber(3),
+            [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+            Ipv4Addr::new(10, 0, 0, 1),
+        );
+        assert_eq!(pkt[0x0b], 0x00, "byte 0x0b must be 0x00");
+        assert_eq!(pkt[0x20], 0x01, "structure marker");
+        assert_eq!(pkt[0x21], 0x02, "keep-alive subtype");
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x36], "packet length BE");
+        assert_eq!(pkt[DEVICE_NUMBER_OFFSET], 3);
+        assert_eq!(pkt[DEVICE_TYPE_OFFSET], u8::from(DeviceType::Cdj));
+        assert_eq!(pkt[DEVICE_TYPE_MIRROR_OFFSET], u8::from(DeviceType::Cdj));
     }
 
     #[test]
@@ -226,5 +267,38 @@ mod tests {
         let ann = parse_keep_alive(&pkt).unwrap();
         assert_eq!(ann.name.len(), NAME_MAX_LEN);
         assert_eq!(ann.name, &long_name[..NAME_MAX_LEN]);
+    }
+
+    #[test]
+    fn parse_peer_count() {
+        let mac = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let ip = [10, 0, 0, 1];
+        let mut pkt = make_keep_alive_packet("CDJ-2000NXS2", 1, 1, mac, ip);
+        pkt[PEER_COUNT_OFFSET] = 4;
+
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert_eq!(ann.peer_count, 4);
+    }
+
+    #[test]
+    fn detect_opus_quad() {
+        let mac = [0x00; 6];
+        let ip = [192, 168, 1, 1];
+        let pkt = make_keep_alive_packet("OPUS-QUAD", 1, 1, mac, ip);
+
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(ann.is_opus_quad);
+        assert!(!ann.is_xdj_az);
+    }
+
+    #[test]
+    fn detect_xdj_az() {
+        let mac = [0x00; 6];
+        let ip = [192, 168, 1, 2];
+        let pkt = make_keep_alive_packet("XDJ-AZ", 2, 1, mac, ip);
+
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(!ann.is_opus_quad);
+        assert!(ann.is_xdj_az);
     }
 }
