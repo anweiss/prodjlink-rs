@@ -127,7 +127,8 @@ impl VirtualCdj {
 
     /// Send a fader start/stop command to a target device.
     pub async fn fader_start(&self, target: DeviceNumber, start: bool) -> Result<()> {
-        let packet = command::build_fader_start(self.config.device_number, target, start);
+        let packet =
+            command::build_fader_start_single(self.config.device_number, target, start);
         self.send_command(&packet).await
     }
 

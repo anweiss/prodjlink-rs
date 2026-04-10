@@ -21,10 +21,10 @@ const MASTER_COMMAND_TYPE: u8 = 0x26;
 const PREFIX_LEN: usize = 0x24;
 
 /// Offset of the rekordbox track ID within a load-track packet.
-pub const LOAD_TRACK_ID_OFFSET: usize = 0x28;
+pub const LOAD_TRACK_ID_OFFSET: usize = 0x2c;
 
 /// Offset of the sync enable/disable flag within a sync-control packet.
-pub const SYNC_FLAG_OFFSET: usize = 0x25;
+pub const SYNC_FLAG_OFFSET: usize = 0x30;
 
 /// Sync-on flag value.
 pub const SYNC_ON: u8 = 0x10;
@@ -64,21 +64,49 @@ fn track_type_to_u8(tt: TrackType) -> u8 {
     }
 }
 
+/// Channel action for fader start/stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaderAction {
+    Start,
+    Stop,
+    NoChange,
+}
+
 /// Build a fader start/stop command packet.
 ///
-/// When `start` is true, tells the target to start playback; false to stop.
+/// Controls up to 4 channels. Each channel can independently start, stop, or
+/// be unchanged.
 pub fn build_fader_start(
+    source_device: DeviceNumber,
+    channels: [FaderAction; 4],
+) -> Vec<u8> {
+    const PAYLOAD_LEN: u16 = 0x08;
+    let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
+    write_prefix(&mut buf, FADER_START_TYPE, source_device, PAYLOAD_LEN);
+    for (i, action) in channels.iter().enumerate() {
+        buf[0x24 + i] = match action {
+            FaderAction::Start => 0x00,
+            FaderAction::Stop => 0x01,
+            FaderAction::NoChange => 0x02,
+        };
+    }
+    buf
+}
+
+/// Build a fader start command targeting a single player.
+pub fn build_fader_start_single(
     source_device: DeviceNumber,
     target_device: DeviceNumber,
     start: bool,
 ) -> Vec<u8> {
-    const PAYLOAD_LEN: u16 = 0x04;
-    let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
-    write_prefix(&mut buf, FADER_START_TYPE, source_device, PAYLOAD_LEN);
-    buf[0x24] = target_device.0;
-    buf[0x25] = if start { 0x00 } else { 0x01 };
-    // 0x26-0x27: padding (already 0)
-    buf
+    let mut channels = [FaderAction::NoChange; 4];
+    let idx = (target_device.0 as usize).saturating_sub(1).min(3);
+    channels[idx] = if start {
+        FaderAction::Start
+    } else {
+        FaderAction::Stop
+    };
+    build_fader_start(source_device, channels)
 }
 
 /// Build a load-track command to tell a CDJ to load a specific track.
@@ -96,14 +124,19 @@ pub fn build_load_track(
     const PAYLOAD_LEN: u16 = 0x34;
     let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
     write_prefix(&mut buf, LOAD_TRACK_TYPE, source_device, PAYLOAD_LEN);
-    buf[0x24] = target_device.0;
-    // 0x25-0x27: padding (already 0)
+    buf[0x24] = source_device.0;
+    buf[0x28] = source_player.0;
+    buf[0x29] = track_source_slot_to_u8(source_slot);
+    buf[0x2a] = track_type_to_u8(track_type);
     number_to_bytes(rekordbox_id, &mut buf, LOAD_TRACK_ID_OFFSET, 4);
-    buf[0x2c] = source_player.0;
-    buf[0x2d] = track_source_slot_to_u8(source_slot);
-    buf[0x2e] = track_type_to_u8(track_type);
-    // TODO: bytes 0x2f-0x57 may contain additional fields observed in
-    // protocol captures (e.g. unknown flags). Zero-filled for now.
+    // 0x38: constant 0x32
+    if buf.len() > 0x38 {
+        buf[0x38] = 0x32;
+    }
+    // 0x40: target device - 1
+    if buf.len() > 0x40 {
+        buf[0x40] = target_device.0.saturating_sub(1);
+    }
     buf
 }
 
@@ -113,12 +146,13 @@ pub fn build_sync_command(
     target_device: DeviceNumber,
     enable: bool,
 ) -> Vec<u8> {
-    const PAYLOAD_LEN: u16 = 0x04;
+    const PAYLOAD_LEN: u16 = 0x0d; // 13 bytes
     let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
     write_prefix(&mut buf, SYNC_CONTROL_TYPE, source_device, PAYLOAD_LEN);
     buf[0x24] = target_device.0;
+    buf[0x26] = source_device.0;
+    buf[0x2c] = source_device.0;
     buf[SYNC_FLAG_OFFSET] = if enable { SYNC_ON } else { SYNC_OFF };
-    // 0x26-0x27: padding (already 0)
     buf
 }
 
@@ -126,11 +160,13 @@ pub fn build_sync_command(
 ///
 /// Announces that `source_device` wants to become the tempo master.
 pub fn build_master_command(source_device: DeviceNumber) -> Vec<u8> {
-    // TODO: the master handoff protocol may require additional payload
-    // fields (e.g. current BPM). Using a minimal packet for now.
-    const PAYLOAD_LEN: u16 = 0x00;
+    const PAYLOAD_LEN: u16 = 0x09;
     let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
     write_prefix(&mut buf, MASTER_COMMAND_TYPE, source_device, PAYLOAD_LEN);
+    buf[0x26] = source_device.0;
+    if buf.len() > 0x2c {
+        buf[0x2c] = source_device.0;
+    }
     buf
 }
 
@@ -141,25 +177,40 @@ mod tests {
 
     #[test]
     fn fader_start_has_correct_header_and_type() {
-        let pkt = build_fader_start(DeviceNumber(5), DeviceNumber(3), true);
+        let pkt = build_fader_start(
+            DeviceNumber(5),
+            [FaderAction::Start, FaderAction::NoChange, FaderAction::NoChange, FaderAction::NoChange],
+        );
         assert_eq!(&pkt[0x00..0x0a], &MAGIC_HEADER);
         assert_eq!(pkt[0x0a], FADER_START_TYPE);
     }
 
     #[test]
-    fn fader_start_contains_device_numbers() {
-        let pkt = build_fader_start(DeviceNumber(5), DeviceNumber(3), true);
+    fn fader_start_channels() {
+        let pkt = build_fader_start(
+            DeviceNumber(5),
+            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+        );
         assert_eq!(pkt[0x21], 5); // source
-        assert_eq!(pkt[0x24], 3); // target
+        assert_eq!(pkt[0x24], 0x00); // channel 1: start
+        assert_eq!(pkt[0x25], 0x01); // channel 2: stop
+        assert_eq!(pkt[0x26], 0x02); // channel 3: no change
+        assert_eq!(pkt[0x27], 0x00); // channel 4: start
     }
 
     #[test]
-    fn fader_start_flag() {
-        let start = build_fader_start(DeviceNumber(1), DeviceNumber(2), true);
-        assert_eq!(start[0x25], 0x00);
+    fn fader_start_single_targets_correct_channel() {
+        let pkt = build_fader_start_single(DeviceNumber(1), DeviceNumber(3), true);
+        assert_eq!(pkt[0x24], 0x02); // channel 1: no change
+        assert_eq!(pkt[0x25], 0x02); // channel 2: no change
+        assert_eq!(pkt[0x26], 0x00); // channel 3: start
+        assert_eq!(pkt[0x27], 0x02); // channel 4: no change
 
-        let stop = build_fader_start(DeviceNumber(1), DeviceNumber(2), false);
-        assert_eq!(stop[0x25], 0x01);
+        let pkt = build_fader_start_single(DeviceNumber(1), DeviceNumber(2), false);
+        assert_eq!(pkt[0x24], 0x02); // channel 1: no change
+        assert_eq!(pkt[0x25], 0x01); // channel 2: stop
+        assert_eq!(pkt[0x26], 0x02); // channel 3: no change
+        assert_eq!(pkt[0x27], 0x02); // channel 4: no change
     }
 
     #[test]
@@ -200,9 +251,24 @@ mod tests {
             TrackType::Unanalyzed,
             100,
         );
-        assert_eq!(pkt[0x2c], 2); // source player
-        assert_eq!(pkt[0x2d], 2); // SdSlot
-        assert_eq!(pkt[0x2e], 2); // Unanalyzed
+        assert_eq!(pkt[0x24], 5); // source device (duplicate)
+        assert_eq!(pkt[0x28], 2); // source player
+        assert_eq!(pkt[0x29], 2); // SdSlot
+        assert_eq!(pkt[0x2a], 2); // Unanalyzed
+    }
+
+    #[test]
+    fn load_track_constant_and_target() {
+        let pkt = build_load_track(
+            DeviceNumber(5),
+            DeviceNumber(3),
+            DeviceNumber(2),
+            TrackSourceSlot::UsbSlot,
+            TrackType::Rekordbox,
+            42,
+        );
+        assert_eq!(pkt[0x38], 0x32);
+        assert_eq!(pkt[0x40], 2); // target_device(3) - 1
     }
 
     #[test]
@@ -222,6 +288,15 @@ mod tests {
     }
 
     #[test]
+    fn sync_command_payload_fields() {
+        let pkt = build_sync_command(DeviceNumber(5), DeviceNumber(2), true);
+        assert_eq!(pkt[0x24], 2); // target
+        assert_eq!(pkt[0x26], 5); // source (payload[2])
+        assert_eq!(pkt[0x2c], 5); // source (payload[8])
+        assert_eq!(pkt.len(), PREFIX_LEN + 0x0d);
+    }
+
+    #[test]
     fn master_command_has_correct_header_and_type() {
         let pkt = build_master_command(DeviceNumber(7));
         assert_eq!(&pkt[0x00..0x0a], &MAGIC_HEADER);
@@ -230,21 +305,29 @@ mod tests {
     }
 
     #[test]
+    fn master_command_payload() {
+        let pkt = build_master_command(DeviceNumber(3));
+        assert_eq!(pkt.len(), PREFIX_LEN + 0x09);
+        assert_eq!(pkt[0x26], 3); // payload[2]
+        assert_eq!(pkt[0x2c], 3); // payload[8]
+    }
+
+    #[test]
     fn device_name_embedded_in_packet() {
-        let pkt = build_fader_start(DeviceNumber(1), DeviceNumber(2), true);
+        let pkt = build_fader_start_single(DeviceNumber(1), DeviceNumber(2), true);
         let name = crate::util::read_device_name(&pkt, 0x0c, 20);
         assert_eq!(name, "prodjlink-rs");
     }
 
     #[test]
     fn round_trip_fader_start_fields() {
-        let pkt = build_fader_start(DeviceNumber(4), DeviceNumber(1), false);
+        let pkt = build_fader_start_single(DeviceNumber(4), DeviceNumber(1), false);
         assert_eq!(&pkt[0..10], &MAGIC_HEADER);
         assert_eq!(pkt[0x0a], FADER_START_TYPE);
         assert_eq!(crate::util::read_device_name(&pkt, 0x0c, 20), "prodjlink-rs");
         assert_eq!(pkt[0x21], 4); // source
-        assert_eq!(pkt[0x24], 1); // target
-        assert_eq!(pkt[0x25], 0x01); // stop
+        // channel 1 (index 0) should be Stop
+        assert_eq!(pkt[0x24], 0x01); // stop
     }
 
     #[test]
@@ -258,10 +341,10 @@ mod tests {
             12345,
         );
         assert_eq!(pkt[0x21], 5);
-        assert_eq!(pkt[0x24], 3);
+        assert_eq!(pkt[0x24], 5); // source device (duplicate)
         assert_eq!(bytes_to_number(&pkt, LOAD_TRACK_ID_OFFSET, 4), 12345);
-        assert_eq!(pkt[0x2c], 2); // source player
-        assert_eq!(pkt[0x2d], 3); // UsbSlot
-        assert_eq!(pkt[0x2e], 1); // Rekordbox
+        assert_eq!(pkt[0x28], 2); // source player
+        assert_eq!(pkt[0x29], 3); // UsbSlot
+        assert_eq!(pkt[0x2a], 1); // Rekordbox
     }
 }
