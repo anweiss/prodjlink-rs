@@ -50,6 +50,7 @@ fn track_source_slot_to_u8(slot: TrackSourceSlot) -> u8 {
         TrackSourceSlot::SdSlot => 2,
         TrackSourceSlot::UsbSlot => 3,
         TrackSourceSlot::Collection => 4,
+        TrackSourceSlot::Usb2Slot => 7,
         TrackSourceSlot::Unknown(n) => n,
     }
 }

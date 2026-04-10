@@ -9,7 +9,7 @@ pub struct DeviceNumber(pub u8);
 
 impl DeviceNumber {
     pub fn new(n: u8) -> Option<Self> {
-        if n == 0 { None } else { Some(Self(n)) }
+        Some(Self(n))
     }
 }
 
@@ -128,6 +128,8 @@ pub enum TrackSourceSlot {
     SdSlot,
     UsbSlot,
     Collection,
+    /// Second USB port, used by XDJ-XZ in four-deck mode (wire value 7).
+    Usb2Slot,
     Unknown(u8),
 }
 
@@ -139,6 +141,7 @@ impl From<u8> for TrackSourceSlot {
             2 => Self::SdSlot,
             3 => Self::UsbSlot,
             4 => Self::Collection,
+            7 => Self::Usb2Slot,
             _ => Self::Unknown(n),
         }
     }
@@ -152,6 +155,7 @@ impl From<TrackSourceSlot> for u8 {
             TrackSourceSlot::SdSlot => 2,
             TrackSourceSlot::UsbSlot => 3,
             TrackSourceSlot::Collection => 4,
+            TrackSourceSlot::Usb2Slot => 7,
             TrackSourceSlot::Unknown(n) => n,
         }
     }

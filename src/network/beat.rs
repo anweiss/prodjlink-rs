@@ -95,6 +95,12 @@ mod tests {
             device_type: DeviceType::Cdj,
             bpm: Bpm(128.0),
             pitch: Pitch(0x100000),
+            next_beat: Some(0),
+            second_beat: Some(0),
+            next_bar: Some(0),
+            fourth_beat: Some(0),
+            second_bar: Some(0),
+            eighth_beat: Some(0),
             beat_within_bar: 1,
             timestamp: Instant::now(),
         };

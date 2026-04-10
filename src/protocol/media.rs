@@ -238,6 +238,7 @@ fn slot_to_u8(slot: TrackSourceSlot) -> u8 {
         TrackSourceSlot::SdSlot => 2,
         TrackSourceSlot::UsbSlot => 3,
         TrackSourceSlot::Collection => 4,
+        TrackSourceSlot::Usb2Slot => 7,
         TrackSourceSlot::Unknown(n) => n,
     }
 }
@@ -508,6 +509,7 @@ mod tests {
             (2, TrackSourceSlot::SdSlot),
             (3, TrackSourceSlot::UsbSlot),
             (4, TrackSourceSlot::Collection),
+            (7, TrackSourceSlot::Usb2Slot),
             (99, TrackSourceSlot::Unknown(99)),
         ];
         for &(byte, slot) in cases {

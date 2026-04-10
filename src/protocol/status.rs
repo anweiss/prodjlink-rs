@@ -607,8 +607,9 @@ mod tests {
 
     #[test]
     fn cdj_status_loop_in_extended_packet() {
+        let base = make_cdj_packet();
         let mut pkt = vec![0u8; CDJ_LOOP_THRESHOLD];
-        pkt[..MIN_CDJ_STATUS_LEN].copy_from_slice(&make_cdj_packet());
+        pkt[..base.len()].copy_from_slice(&base);
 
         // Loop start raw = 1000, loop end raw = 2000, loop beats = 4
         number_to_bytes(1000, &mut pkt, LOOP_START_OFFSET, 4);
@@ -874,5 +875,105 @@ mod tests {
         let s = parse_cdj_status(&pkt).unwrap();
         assert_eq!(s.play_state_2, PlayState2::Moving);
         assert_eq!(s.play_state_3, PlayState3::ForwardCdj);
+    }
+
+    // -- New field tests --
+
+    #[test]
+    fn cdj_status_new_field_defaults() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+
+        assert!(!s.is_busy);
+        assert_eq!(s.track_number, 0);
+        assert!(s.cue_countdown.is_none()); // sentinel 0x01FF
+        assert_eq!(s.packet_number, 0);
+        assert!(!s.link_media_available);
+    }
+
+    #[test]
+    fn cdj_status_is_busy() {
+        let mut pkt = make_cdj_packet();
+        pkt[IS_BUSY_OFFSET] = 1;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_busy);
+    }
+
+    #[test]
+    fn cdj_status_track_number() {
+        let mut pkt = make_cdj_packet();
+        pkt[TRACK_NUMBER_OFFSET] = 0x00;
+        pkt[TRACK_NUMBER_OFFSET + 1] = 0x05;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.track_number, 5);
+    }
+
+    #[test]
+    fn cdj_status_cue_countdown_present() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x00;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x10;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.cue_countdown, Some(16));
+    }
+
+    #[test]
+    fn cdj_status_cue_countdown_sentinel() {
+        let pkt = make_cdj_packet(); // sentinel already set
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.cue_countdown.is_none());
+    }
+
+    #[test]
+    fn cdj_status_local_usb_loaded() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_USB_STATE_OFFSET] = 4;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_usb_loaded());
+        assert!(!s.is_local_usb_empty());
+    }
+
+    #[test]
+    fn cdj_status_local_usb_empty() {
+        let pkt = make_cdj_packet(); // default 0
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_usb_empty());
+        assert!(!s.is_local_usb_loaded());
+    }
+
+    #[test]
+    fn cdj_status_local_sd_loaded() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_SD_STATE_OFFSET] = 4;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_sd_loaded());
+        assert!(!s.is_local_sd_empty());
+    }
+
+    #[test]
+    fn cdj_status_local_sd_empty() {
+        let pkt = make_cdj_packet(); // default 0
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_sd_empty());
+        assert!(!s.is_local_sd_loaded());
+    }
+
+    #[test]
+    fn cdj_status_link_media_available() {
+        let mut pkt = make_cdj_packet();
+        pkt[LINK_MEDIA_AVAILABLE_OFFSET] = 1;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.link_media_available);
+    }
+
+    #[test]
+    fn cdj_status_packet_number() {
+        let mut pkt = make_cdj_packet();
+        pkt[PACKET_NUMBER_OFFSET] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 1] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 2] = 0x01;
+        pkt[PACKET_NUMBER_OFFSET + 3] = 0x00;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.packet_number, 256);
     }
 }
