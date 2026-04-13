@@ -656,7 +656,8 @@ impl Default for CdjStatusBuilder {
 /// The returned packet is at least 0xCC bytes (nexus-era minimum) and can be
 /// parsed back with [`parse_cdj_status`].
 pub fn build_cdj_status(params: &CdjStatusBuilder) -> Vec<u8> {
-    let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+    // Use 0xd4 so parsers take the nexus-era flag path in is_playing().
+    let mut pkt = vec![0u8; 0xd4];
 
     // Magic header
     pkt[..10].copy_from_slice(&header::MAGIC_HEADER);
@@ -694,8 +695,14 @@ pub fn build_cdj_status(params: &CdjStatusBuilder) -> Vec<u8> {
     // Master hand-off
     pkt[MASTER_HAND_OFF_OFFSET] = params.master_hand_off.unwrap_or(NO_HAND_OFF);
 
-    // Play state 2 — set to Stopped (0x6e) by default; override if playing
+    // Play state 1 — Playing (0x03) or Paused (0x05) depending on flag
+    pkt[PLAY_STATE_OFFSET] = if params.flags.playing { 0x03 } else { 0x05 };
+
+    // Play state 2 — Moving (0x6a) or Stopped (0x6e)
     pkt[PLAY_STATE_2_OFFSET] = if params.flags.playing { 0x6a } else { 0x6e };
+
+    // Play state 3 — ForwardCdj (0x0d) if playing, PausedOrReverse (0x01) if not
+    pkt[PLAY_STATE_3_OFFSET] = if params.flags.playing { 0x0d } else { 0x01 };
 
     // Cue countdown sentinel
     pkt[CUE_COUNTDOWN_OFFSET] = 0x01;
@@ -1363,7 +1370,7 @@ mod tests {
     #[test]
     fn build_cdj_status_minimum_size() {
         let pkt = build_cdj_status(&CdjStatusBuilder::default());
-        assert_eq!(pkt.len(), MIN_CDJ_STATUS_LEN);
+        assert_eq!(pkt.len(), 0xd4); // nexus-era size so is_playing() uses flags
     }
 
     #[test]
