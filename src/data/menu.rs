@@ -141,14 +141,8 @@ pub(crate) fn parse_menu_items(messages: &[Message]) -> Vec<MenuItem> {
             let item_type_raw = msg.arg_number(6).ok()? as u16;
             let item_type = MenuItemType::from(item_type_raw);
             let id = msg.arg_number(1).unwrap_or(0);
-            let label1 = msg
-                .arg_string(3)
-                .map(|s| s.to_owned())
-                .unwrap_or_default();
-            let label2 = msg
-                .arg_string(5)
-                .map(|s| s.to_owned())
-                .unwrap_or_default();
+            let label1 = msg.arg_string(3).map(|s| s.to_owned()).unwrap_or_default();
+            let label2 = msg.arg_string(5).map(|s| s.to_owned()).unwrap_or_default();
             Some(MenuItem {
                 item_type,
                 id,
@@ -272,7 +266,12 @@ impl MenuLoader {
         slot: TrackSourceSlot,
         sort: Option<SortOrder>,
     ) -> Result<Vec<MenuItem>> {
-        menu_request(client, MessageType::OriginalArtistMenuReq, root_args(slot, sort)).await
+        menu_request(
+            client,
+            MessageType::OriginalArtistMenuReq,
+            root_args(slot, sort),
+        )
+        .await
     }
 
     /// Request the remixer list.
@@ -743,12 +742,7 @@ mod tests {
     use crate::dbserver::message::{MenuItemType, Message, MessageType};
     use crate::device::types::TrackSourceSlot;
 
-    fn mock_menu_item_msg(
-        item_type: MenuItemType,
-        id: u32,
-        label1: &str,
-        label2: &str,
-    ) -> Message {
+    fn mock_menu_item_msg(item_type: MenuItemType, id: u32, label1: &str, label2: &str) -> Message {
         Message::new(
             1,
             MessageType::MenuItem,
@@ -821,7 +815,10 @@ mod tests {
     #[test]
     fn parse_menu_items_with_two_labels() {
         let messages = vec![mock_menu_item_msg(
-            MenuItemType::TrackTitleAndArtist, 42, "Around the World", "Daft Punk",
+            MenuItemType::TrackTitleAndArtist,
+            42,
+            "Around the World",
+            "Daft Punk",
         )];
         let items = parse_menu_items(&messages);
         assert_eq!(items.len(), 1);
@@ -840,7 +837,8 @@ mod tests {
     #[test]
     fn parse_skips_messages_without_enough_args() {
         let short_msg = Message::new(
-            1, MessageType::MenuItem,
+            1,
+            MessageType::MenuItem,
             vec![Field::number_with_size(0, 4), Field::number_with_size(1, 4)],
         );
         let items = parse_menu_items(&[short_msg]);
@@ -920,10 +918,30 @@ mod tests {
 
     #[test]
     fn all_slot_wire_values_correct() {
-        assert_eq!(root_args(TrackSourceSlot::CdSlot, None)[0].as_number().unwrap(), 1);
-        assert_eq!(root_args(TrackSourceSlot::SdSlot, None)[0].as_number().unwrap(), 2);
-        assert_eq!(root_args(TrackSourceSlot::UsbSlot, None)[0].as_number().unwrap(), 3);
-        assert_eq!(root_args(TrackSourceSlot::Collection, None)[0].as_number().unwrap(), 4);
+        assert_eq!(
+            root_args(TrackSourceSlot::CdSlot, None)[0]
+                .as_number()
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            root_args(TrackSourceSlot::SdSlot, None)[0]
+                .as_number()
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            root_args(TrackSourceSlot::UsbSlot, None)[0]
+                .as_number()
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            root_args(TrackSourceSlot::Collection, None)[0]
+                .as_number()
+                .unwrap(),
+            4
+        );
     }
 
     // -- Menu item type round-trip ----------------------------------------
@@ -931,15 +949,24 @@ mod tests {
     #[test]
     fn parse_preserves_item_type_variants() {
         let types = [
-            MenuItemType::Folder, MenuItemType::Artist, MenuItemType::AlbumTitle,
-            MenuItemType::TrackTitle, MenuItemType::Genre, MenuItemType::Playlist,
-            MenuItemType::Key, MenuItemType::GenreMenu, MenuItemType::ArtistMenu,
+            MenuItemType::Folder,
+            MenuItemType::Artist,
+            MenuItemType::AlbumTitle,
+            MenuItemType::TrackTitle,
+            MenuItemType::Genre,
+            MenuItemType::Playlist,
+            MenuItemType::Key,
+            MenuItemType::GenreMenu,
+            MenuItemType::ArtistMenu,
         ];
         for expected_type in &types {
             let msg = mock_menu_item_msg(*expected_type, 1, "test", "");
             let items = parse_menu_items(&[msg]);
             assert_eq!(items.len(), 1);
-            assert_eq!(items[0].item_type, *expected_type, "round-trip failed for {expected_type:?}");
+            assert_eq!(
+                items[0].item_type, *expected_type,
+                "round-trip failed for {expected_type:?}"
+            );
         }
     }
 
@@ -970,7 +997,13 @@ mod tests {
 
     #[test]
     fn filtered_args_3_with_sort_for_label_artist_album() {
-        let args = filtered_args_3(TrackSourceSlot::SdSlot, Some(SortOrder::DateAdded), 10, 20, 30);
+        let args = filtered_args_3(
+            TrackSourceSlot::SdSlot,
+            Some(SortOrder::DateAdded),
+            10,
+            20,
+            30,
+        );
         assert_eq!(args.len(), 5);
         assert_eq!(args[0].as_number().unwrap(), 2);
         assert_eq!(args[1].as_number().unwrap(), 9);

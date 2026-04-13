@@ -77,10 +77,7 @@ pub enum FaderAction {
 ///
 /// Controls up to 4 channels. Each channel can independently start, stop, or
 /// be unchanged.
-pub fn build_fader_start(
-    source_device: DeviceNumber,
-    channels: [FaderAction; 4],
-) -> Vec<u8> {
+pub fn build_fader_start(source_device: DeviceNumber, channels: [FaderAction; 4]) -> Vec<u8> {
     const PAYLOAD_LEN: u16 = 0x08;
     let mut buf = vec![0u8; PREFIX_LEN + PAYLOAD_LEN as usize];
     write_prefix(&mut buf, FADER_START_TYPE, source_device, PAYLOAD_LEN);
@@ -180,7 +177,12 @@ mod tests {
     fn fader_start_has_correct_header_and_type() {
         let pkt = build_fader_start(
             DeviceNumber(5),
-            [FaderAction::Start, FaderAction::NoChange, FaderAction::NoChange, FaderAction::NoChange],
+            [
+                FaderAction::Start,
+                FaderAction::NoChange,
+                FaderAction::NoChange,
+                FaderAction::NoChange,
+            ],
         );
         assert_eq!(&pkt[0x00..0x0a], &MAGIC_HEADER);
         assert_eq!(pkt[0x0a], FADER_START_TYPE);
@@ -190,7 +192,12 @@ mod tests {
     fn fader_start_channels() {
         let pkt = build_fader_start(
             DeviceNumber(5),
-            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+            [
+                FaderAction::Start,
+                FaderAction::Stop,
+                FaderAction::NoChange,
+                FaderAction::Start,
+            ],
         );
         assert_eq!(pkt[0x21], 5); // source
         assert_eq!(pkt[0x24], 0x00); // channel 1: start
@@ -325,7 +332,10 @@ mod tests {
         let pkt = build_fader_start_single(DeviceNumber(4), DeviceNumber(1), false);
         assert_eq!(&pkt[0..10], &MAGIC_HEADER);
         assert_eq!(pkt[0x0a], FADER_START_TYPE);
-        assert_eq!(crate::util::read_device_name(&pkt, 0x0c, 20), "prodjlink-rs");
+        assert_eq!(
+            crate::util::read_device_name(&pkt, 0x0c, 20),
+            "prodjlink-rs"
+        );
         assert_eq!(pkt[0x21], 4); // source
         // channel 1 (index 0) should be Stop
         assert_eq!(pkt[0x24], 0x01); // stop

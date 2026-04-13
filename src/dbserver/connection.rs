@@ -299,7 +299,11 @@ mod tests {
             let mut c = std::io::Cursor::new(&buf[..]);
             let req = Message::parse(&mut c).unwrap();
 
-            let resp = Message::new(req.transaction, MessageType::MenuItem, vec![Field::number(42)]);
+            let resp = Message::new(
+                req.transaction,
+                MessageType::MenuItem,
+                vec![Field::number(42)],
+            );
             stream.write_all(&resp.serialize()).await.unwrap();
         })
         .await;

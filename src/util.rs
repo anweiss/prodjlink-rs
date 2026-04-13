@@ -21,9 +21,7 @@ pub fn bytes_to_number(data: &[u8], offset: usize, len: usize) -> u32 {
         1 => data[offset] as u32,
         2 => u16::from_be_bytes([data[offset], data[offset + 1]]) as u32,
         3 => {
-            (data[offset] as u32) << 16
-                | (data[offset + 1] as u32) << 8
-                | (data[offset + 2] as u32)
+            (data[offset] as u32) << 16 | (data[offset + 1] as u32) << 8 | (data[offset + 2] as u32)
         }
         4 => u32::from_be_bytes([
             data[offset],
@@ -42,9 +40,7 @@ pub fn bytes_to_number_le(data: &[u8], offset: usize, len: usize) -> u32 {
         1 => data[offset] as u32,
         2 => u16::from_le_bytes([data[offset], data[offset + 1]]) as u32,
         3 => {
-            (data[offset] as u32)
-                | (data[offset + 1] as u32) << 8
-                | (data[offset + 2] as u32) << 16
+            (data[offset] as u32) | (data[offset + 1] as u32) << 8 | (data[offset + 2] as u32) << 16
         }
         4 => u32::from_le_bytes([
             data[offset],

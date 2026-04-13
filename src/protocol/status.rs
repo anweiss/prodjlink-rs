@@ -462,8 +462,7 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
         u16::from_be_bytes([data[TRACK_NUMBER_OFFSET], data[TRACK_NUMBER_OFFSET + 1]]);
 
     let cue_countdown = {
-        let raw =
-            u16::from_be_bytes([data[CUE_COUNTDOWN_OFFSET], data[CUE_COUNTDOWN_OFFSET + 1]]);
+        let raw = u16::from_be_bytes([data[CUE_COUNTDOWN_OFFSET], data[CUE_COUNTDOWN_OFFSET + 1]]);
         if raw == 0x01FF { None } else { Some(raw) }
     };
 
@@ -482,8 +481,10 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
     let local_sd_state = data[LOCAL_SD_STATE_OFFSET];
     let link_media_available = data[LINK_MEDIA_AVAILABLE_OFFSET] != 0;
     let local_disc_state = data[LOCAL_CD_STATE_OFFSET];
-    let disc_track_count =
-        u16::from_be_bytes([data[DISC_TRACK_COUNT_OFFSET], data[DISC_TRACK_COUNT_OFFSET + 1]]);
+    let disc_track_count = u16::from_be_bytes([
+        data[DISC_TRACK_COUNT_OFFSET],
+        data[DISC_TRACK_COUNT_OFFSET + 1],
+    ]);
 
     Ok(CdjStatus {
         name,
@@ -1832,7 +1833,10 @@ mod tests {
             let mut pkt = make_cdj_packet();
             pkt[BEAT_WITHIN_BAR_OFFSET] = b;
             let s = parse_cdj_status(&pkt).unwrap();
-            assert!(s.is_beat_within_bar_meaningful(), "beat {b} should be meaningful");
+            assert!(
+                s.is_beat_within_bar_meaningful(),
+                "beat {b} should be meaningful"
+            );
         }
     }
 

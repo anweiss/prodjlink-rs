@@ -72,9 +72,7 @@ pub enum TempoMasterEvent {
         new_bpm: Bpm,
     },
     /// The current master is yielding to us — we should acknowledge.
-    MasterYieldedToUs {
-        from_device: DeviceNumber,
-    },
+    MasterYieldedToUs { from_device: DeviceNumber },
     /// We became the tempo master.
     WeBecameMaster,
     /// We are no longer the tempo master.
@@ -165,9 +163,7 @@ impl TempoMaster {
             }
         }
 
-        if current.master_device == Some(device)
-            && (current.master_tempo.0 - bpm.0).abs() > 0.001
-        {
+        if current.master_device == Some(device) && (current.master_tempo.0 - bpm.0).abs() > 0.001 {
             let _ = self.event_tx.send(TempoMasterEvent::TempoChanged {
                 device,
                 old_bpm: current.master_tempo,
@@ -188,8 +184,7 @@ impl TempoMaster {
     /// Only updates the tempo if the beat comes from the current master.
     pub fn on_beat(&self, device: DeviceNumber, bpm: Bpm) {
         let current = self.state_rx.borrow().clone();
-        if current.master_device == Some(device) && (current.master_tempo.0 - bpm.0).abs() > 0.001
-        {
+        if current.master_device == Some(device) && (current.master_tempo.0 - bpm.0).abs() > 0.001 {
             let _ = self.event_tx.send(TempoMasterEvent::TempoChanged {
                 device,
                 old_bpm: current.master_tempo,

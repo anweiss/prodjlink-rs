@@ -1,6 +1,6 @@
-use bytes::{Buf, BufMut, Bytes};
 #[cfg(test)]
 use bytes::BytesMut;
+use bytes::{Buf, BufMut, Bytes};
 
 use crate::error::{ProDjLinkError, Result};
 
@@ -191,9 +191,7 @@ impl Field {
     pub fn as_number(&self) -> Result<u32> {
         match self {
             Field::Number { value, .. } => Ok(*value),
-            _ => Err(ProDjLinkError::Parse(
-                "expected Number field".into(),
-            )),
+            _ => Err(ProDjLinkError::Parse("expected Number field".into())),
         }
     }
 
@@ -201,9 +199,7 @@ impl Field {
     pub fn as_binary(&self) -> Result<&Bytes> {
         match self {
             Field::Binary { data } => Ok(data),
-            _ => Err(ProDjLinkError::Parse(
-                "expected Binary field".into(),
-            )),
+            _ => Err(ProDjLinkError::Parse("expected Binary field".into())),
         }
     }
 
@@ -211,9 +207,7 @@ impl Field {
     pub fn as_string(&self) -> Result<&str> {
         match self {
             Field::String { text } => Ok(text.as_str()),
-            _ => Err(ProDjLinkError::Parse(
-                "expected String field".into(),
-            )),
+            _ => Err(ProDjLinkError::Parse("expected String field".into())),
         }
     }
 }
@@ -228,21 +222,39 @@ mod tests {
     fn parse_number_1_byte() {
         let data: &[u8] = &[WIRE_TYPE_NUMBER_1, 0x42];
         let field = Field::parse(&mut &data[..]).unwrap();
-        assert_eq!(field, Field::Number { value: 0x42, size: 1 });
+        assert_eq!(
+            field,
+            Field::Number {
+                value: 0x42,
+                size: 1
+            }
+        );
     }
 
     #[test]
     fn parse_number_2_byte() {
         let data: &[u8] = &[WIRE_TYPE_NUMBER_2, 0x01, 0x23];
         let field = Field::parse(&mut &data[..]).unwrap();
-        assert_eq!(field, Field::Number { value: 0x0123, size: 2 });
+        assert_eq!(
+            field,
+            Field::Number {
+                value: 0x0123,
+                size: 2
+            }
+        );
     }
 
     #[test]
     fn parse_number_4_byte() {
         let data: &[u8] = &[WIRE_TYPE_NUMBER_4, 0xDE, 0xAD, 0xBE, 0xEF];
         let field = Field::parse(&mut &data[..]).unwrap();
-        assert_eq!(field, Field::Number { value: 0xDEADBEEF, size: 4 });
+        assert_eq!(
+            field,
+            Field::Number {
+                value: 0xDEADBEEF,
+                size: 4
+            }
+        );
     }
 
     #[test]
@@ -271,23 +283,63 @@ mod tests {
 
     #[test]
     fn round_trip_number() {
-        for (value, size) in [(0u32, 1), (255, 1), (256, 2), (65535, 2), (65536, 4), (0xDEADBEEF, 4)] {
+        for (value, size) in [
+            (0u32, 1),
+            (255, 1),
+            (256, 2),
+            (65535, 2),
+            (65536, 4),
+            (0xDEADBEEF, 4),
+        ] {
             let original = Field::number_with_size(value, size);
             let mut buf = BytesMut::new();
             original.serialize(&mut buf);
             let parsed = Field::parse(&mut &buf[..]).unwrap();
-            assert_eq!(original, parsed, "round-trip failed for value={value}, size={size}");
+            assert_eq!(
+                original, parsed,
+                "round-trip failed for value={value}, size={size}"
+            );
         }
     }
 
     #[test]
     fn auto_size_selection() {
         assert_eq!(Field::number(0), Field::Number { value: 0, size: 1 });
-        assert_eq!(Field::number(255), Field::Number { value: 255, size: 1 });
-        assert_eq!(Field::number(256), Field::Number { value: 256, size: 2 });
-        assert_eq!(Field::number(65535), Field::Number { value: 65535, size: 2 });
-        assert_eq!(Field::number(65536), Field::Number { value: 65536, size: 4 });
-        assert_eq!(Field::number(0xFFFFFFFF), Field::Number { value: 0xFFFFFFFF, size: 4 });
+        assert_eq!(
+            Field::number(255),
+            Field::Number {
+                value: 255,
+                size: 1
+            }
+        );
+        assert_eq!(
+            Field::number(256),
+            Field::Number {
+                value: 256,
+                size: 2
+            }
+        );
+        assert_eq!(
+            Field::number(65535),
+            Field::Number {
+                value: 65535,
+                size: 2
+            }
+        );
+        assert_eq!(
+            Field::number(65536),
+            Field::Number {
+                value: 65536,
+                size: 4
+            }
+        );
+        assert_eq!(
+            Field::number(0xFFFFFFFF),
+            Field::Number {
+                value: 0xFFFFFFFF,
+                size: 4
+            }
+        );
     }
 
     // --- Binary field tests ---
@@ -296,7 +348,12 @@ mod tests {
     fn parse_binary() {
         let data: &[u8] = &[WIRE_TYPE_BINARY, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC];
         let field = Field::parse(&mut &data[..]).unwrap();
-        assert_eq!(field, Field::Binary { data: Bytes::from_static(&[0xAA, 0xBB, 0xCC]) });
+        assert_eq!(
+            field,
+            Field::Binary {
+                data: Bytes::from_static(&[0xAA, 0xBB, 0xCC])
+            }
+        );
     }
 
     #[test]
@@ -311,7 +368,10 @@ mod tests {
         let field = Field::binary(vec![0xAA, 0xBB, 0xCC]);
         let mut buf = BytesMut::new();
         field.serialize(&mut buf);
-        assert_eq!(&buf[..], &[WIRE_TYPE_BINARY, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
+        assert_eq!(
+            &buf[..],
+            &[WIRE_TYPE_BINARY, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC]
+        );
     }
 
     #[test]
@@ -350,8 +410,16 @@ mod tests {
         // 3 chars (H, i, \0), each 2 bytes
         let expected: &[u8] = &[
             WIRE_TYPE_STRING,
-            0x00, 0x00, 0x00, 0x03, // char count
-            0x00, b'H', 0x00, b'i', 0x00, 0x00, // UTF-16BE with null terminator
+            0x00,
+            0x00,
+            0x00,
+            0x03, // char count
+            0x00,
+            b'H',
+            0x00,
+            b'i',
+            0x00,
+            0x00, // UTF-16BE with null terminator
         ];
         assert_eq!(&buf[..], expected);
     }
@@ -383,9 +451,14 @@ mod tests {
         // 2 chars: 'あ' + null
         let expected: &[u8] = &[
             WIRE_TYPE_STRING,
-            0x00, 0x00, 0x00, 0x02, // char count = 2
-            0x30, 0x42, // U+3042 in UTF-16BE
-            0x00, 0x00, // null terminator
+            0x00,
+            0x00,
+            0x00,
+            0x02, // char count = 2
+            0x30,
+            0x42, // U+3042 in UTF-16BE
+            0x00,
+            0x00, // null terminator
         ];
         assert_eq!(&buf[..], expected);
     }

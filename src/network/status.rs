@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::device::types::DeviceNumber;
 use crate::error::Result;
 use crate::protocol::header::STATUS_PORT;
-use crate::protocol::status::{parse_status, DeviceUpdate};
+use crate::protocol::status::{DeviceUpdate, parse_status};
 
 /// Create a UDP socket bound to `STATUS_PORT` with `SO_REUSEADDR` +
 /// `SO_REUSEPORT` so it can coexist with the command listener in
@@ -46,8 +46,7 @@ impl StatusListener {
         let socket = create_status_socket()?;
         let socket = Arc::new(socket);
         let (event_tx, _) = broadcast::channel(512);
-        let latest: Arc<RwLock<HashMap<u8, DeviceUpdate>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let latest: Arc<RwLock<HashMap<u8, DeviceUpdate>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let recv_tx = event_tx.clone();
         let recv_latest = latest.clone();
@@ -207,8 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_map_insert_and_retrieve() {
-        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let cdj = make_cdj_update(1);
         let mixer = make_mixer_update(33);
@@ -227,8 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_map_overwrite() {
-        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let cdj1 = make_cdj_update(1);
         let cdj1_v2 = make_cdj_update(1);
@@ -245,8 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_map_missing_key_returns_none() {
-        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let map: Arc<RwLock<HashMap<u8, DeviceUpdate>>> = Arc::new(RwLock::new(HashMap::new()));
 
         let r = map.read().await;
         assert!(r.get(&99).is_none());

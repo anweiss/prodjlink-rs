@@ -101,10 +101,7 @@ fn cdj_status_looping_round_trip() {
 
 #[test]
 fn cdj_status_paused_round_trip() {
-    let pkt = MockCdjStatusBuilder::new(1)
-        .bpm(130.0)
-        .paused()
-        .build();
+    let pkt = MockCdjStatusBuilder::new(1).bpm(130.0).paused().build();
 
     let s = parse_cdj_status(&pkt).expect("should parse paused CDJ status");
     assert!(s.is_paused());
@@ -142,9 +139,7 @@ fn cdj_status_cdj3000_loop_round_trip() {
 
 #[test]
 fn cdj_status_sd_loaded_round_trip() {
-    let pkt = MockCdjStatusBuilder::new(1)
-        .sd_loaded()
-        .build();
+    let pkt = MockCdjStatusBuilder::new(1).sd_loaded().build();
 
     let s = parse_cdj_status(&pkt).expect("should parse SD loaded status");
     assert!(s.is_local_sd_loaded());
@@ -170,13 +165,13 @@ fn cdj_status_pitch_round_trip() {
 
 #[test]
 fn cdj_status_via_parse_status() {
-    let pkt = MockCdjStatusBuilder::new(2)
-        .bpm(128.0)
-        .playing()
-        .build();
+    let pkt = MockCdjStatusBuilder::new(2).bpm(128.0).playing().build();
 
     let update = parse_status(&pkt).expect("should parse via dispatcher");
-    assert!(matches!(update, crate::protocol::status::DeviceUpdate::Cdj(_)));
+    assert!(matches!(
+        update,
+        crate::protocol::status::DeviceUpdate::Cdj(_)
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -205,13 +200,13 @@ fn mixer_status_round_trip() {
 
 #[test]
 fn mixer_status_via_parse_status() {
-    let pkt = MockMixerStatusBuilder::new(33)
-        .bpm(128.0)
-        .master()
-        .build();
+    let pkt = MockMixerStatusBuilder::new(33).bpm(128.0).master().build();
 
     let update = parse_status(&pkt).expect("should parse mixer via dispatcher");
-    assert!(matches!(update, crate::protocol::status::DeviceUpdate::Mixer(_)));
+    assert!(matches!(
+        update,
+        crate::protocol::status::DeviceUpdate::Mixer(_)
+    ));
 }
 
 // -----------------------------------------------------------------------
@@ -532,21 +527,30 @@ fn malformed_magic_rejected() {
 fn truncated_cdj_status_rejected() {
     let pkt = MockCdjStatusBuilder::new(1).bpm(128.0).build();
     let err = parse_cdj_status(&pkt[..0x50]).unwrap_err();
-    assert!(matches!(err, crate::error::ProDjLinkError::PacketTooShort { .. }));
+    assert!(matches!(
+        err,
+        crate::error::ProDjLinkError::PacketTooShort { .. }
+    ));
 }
 
 #[test]
 fn truncated_beat_rejected() {
     let pkt = MockBeatBuilder::new(1).bpm(128.0).build();
     let err = parse_beat(&pkt[..0x30]).unwrap_err();
-    assert!(matches!(err, crate::error::ProDjLinkError::PacketTooShort { .. }));
+    assert!(matches!(
+        err,
+        crate::error::ProDjLinkError::PacketTooShort { .. }
+    ));
 }
 
 #[test]
 fn truncated_keep_alive_rejected() {
     let pkt = mock_keep_alive("X", 1, 1, [0; 4], [0; 6]);
     let err = parse_keep_alive(&pkt[..0x20]).unwrap_err();
-    assert!(matches!(err, crate::error::ProDjLinkError::PacketTooShort { .. }));
+    assert!(matches!(
+        err,
+        crate::error::ProDjLinkError::PacketTooShort { .. }
+    ));
 }
 
 #[test]
@@ -562,7 +566,10 @@ fn unknown_play_state_2_variant() {
     let mut pkt = MockCdjStatusBuilder::new(1).bpm(128.0).build();
     pkt[0x8b] = 0x01; // unknown play state 2
     let s = parse_cdj_status(&pkt).expect("should still parse");
-    assert_eq!(s.play_state_2, crate::device::types::PlayState2::Unknown(0x01));
+    assert_eq!(
+        s.play_state_2,
+        crate::device::types::PlayState2::Unknown(0x01)
+    );
 }
 
 #[test]
@@ -570,7 +577,10 @@ fn unknown_play_state_3_variant() {
     let mut pkt = MockCdjStatusBuilder::new(1).bpm(128.0).build();
     pkt[0x9d] = 0xFF; // unknown play state 3
     let s = parse_cdj_status(&pkt).expect("should still parse");
-    assert_eq!(s.play_state_3, crate::device::types::PlayState3::Unknown(0xFF));
+    assert_eq!(
+        s.play_state_3,
+        crate::device::types::PlayState3::Unknown(0xFF)
+    );
 }
 
 #[test]

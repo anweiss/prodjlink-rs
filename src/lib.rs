@@ -42,7 +42,7 @@ pub use device::settings::{
 // Network services
 pub use network::beat::{BeatEvent, BeatFinder};
 pub use network::finder::{DeviceFinder, FinderEvent};
-pub use network::interface::{find_interface_by_ip, find_matching_interface, NetworkInterface};
+pub use network::interface::{NetworkInterface, find_interface_by_ip, find_matching_interface};
 pub use network::status::StatusListener;
 pub use network::tempo::{MasterState, TempoMaster, TempoMasterEvent};
 pub use network::time::{PositionUpdate, TimeFinder};

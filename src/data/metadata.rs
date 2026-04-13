@@ -1,4 +1,4 @@
-use crate::device::types::{Bpm, DeviceNumber, SlotReference, TrackSourceSlot, TrackType};
+use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType, SlotReference};
 
 /// A searchable item with both a database ID and display label.
 /// Used for artist, album, genre, key, label, original artist, and remixer.
@@ -44,7 +44,7 @@ impl DataReference {
             player,
             slot,
             rekordbox_id,
-            track_type: TrackType::NoTrack,
+            track_type: TrackType::Rekordbox,
         }
     }
 
@@ -60,6 +60,14 @@ impl DataReference {
             slot,
             rekordbox_id,
             track_type,
+        }
+    }
+
+    /// Get a [`SlotReference`] for this data reference's player and slot.
+    pub fn slot_reference(&self) -> SlotReference {
+        SlotReference {
+            player: self.player,
+            slot: self.slot,
         }
     }
 }
@@ -129,7 +137,7 @@ impl TrackMetadata {
             artwork_id: 0,
             year: 0,
             bit_rate: 0,
-            track_type: TrackType::NoTrack,
+            track_type: TrackType::Rekordbox,
         }
     }
 
@@ -240,7 +248,7 @@ mod tests {
         assert_eq!(dr.player, DeviceNumber(3));
         assert_eq!(dr.slot, TrackSourceSlot::UsbSlot);
         assert_eq!(dr.rekordbox_id, 42);
-        assert_eq!(dr.track_type, TrackType::NoTrack);
+        assert_eq!(dr.track_type, TrackType::Rekordbox);
     }
 
     #[test]
@@ -292,7 +300,7 @@ mod tests {
         assert_eq!(meta.date_added, "");
         assert_eq!(meta.year, 0);
         assert_eq!(meta.bit_rate, 0);
-        assert_eq!(meta.track_type, TrackType::NoTrack);
+        assert_eq!(meta.track_type, TrackType::Rekordbox);
         assert_eq!(meta.data_ref, make_data_ref());
     }
 

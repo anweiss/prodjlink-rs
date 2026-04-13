@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use tokio::sync::broadcast;
@@ -118,11 +118,7 @@ impl TimeFinder {
         let pos = positions.get(&device.0)?;
 
         if pos.playing && pos.pitch_multiplier > 0.0 {
-            let elapsed_ms = pos
-                .timestamp
-                .elapsed()
-                .as_secs_f64()
-                * 1000.0;
+            let elapsed_ms = pos.timestamp.elapsed().as_secs_f64() * 1000.0;
             let interpolated = pos.position_ms as f64 + elapsed_ms * pos.pitch_multiplier;
             Some(interpolated.max(0.0) as u64)
         } else {
@@ -324,7 +320,9 @@ impl Default for TimeFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::status::{build_cdj_status, parse_cdj_status, CdjStatusBuilder, CdjStatusFlags};
+    use crate::protocol::status::{
+        CdjStatusBuilder, CdjStatusFlags, build_cdj_status, parse_cdj_status,
+    };
     use std::time::Duration;
 
     /// Helper: build and parse a CdjStatus with the given parameters.
@@ -632,7 +630,10 @@ mod tests {
         tf.on_precise_position(&pp);
 
         let update = tf.get_latest_position(DeviceNumber(1)).unwrap();
-        assert!(update.playing, "precise position should preserve playing state");
+        assert!(
+            update.playing,
+            "precise position should preserve playing state"
+        );
     }
 
     // -----------------------------------------------------------------------

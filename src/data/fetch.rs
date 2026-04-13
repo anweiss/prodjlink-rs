@@ -1,11 +1,11 @@
 use std::net::Ipv4Addr;
 
 use crate::data::artwork::{
-    build_art_request_args, extract_art_from_response, AlbumArt, ArtworkReference,
+    AlbumArt, ArtworkReference, build_art_request_args, extract_art_from_response,
 };
 use crate::data::beatgrid::BeatGrid;
 use crate::data::cue::CueList;
-use crate::data::metadata::{build_metadata_request_args, DataReference, TrackMetadata};
+use crate::data::metadata::{DataReference, TrackMetadata, build_metadata_request_args};
 use crate::data::waveform::{WaveformDetail, WaveformPreview, WaveformStyle};
 use crate::dbserver::connection::ConnectionManager;
 use crate::dbserver::field::Field;
@@ -76,9 +76,7 @@ async fn do_waveform_preview(
     let data = resp
         .args
         .get(3)
-        .ok_or_else(|| {
-            ProDjLinkError::Parse("missing waveform preview data in response".into())
-        })?
+        .ok_or_else(|| ProDjLinkError::Parse("missing waveform preview data in response".into()))?
         .as_binary()?
         .clone();
     WaveformPreview::from_bytes(data, WaveformStyle::Blue)
@@ -94,9 +92,7 @@ async fn do_waveform_detail(
     let data = resp
         .args
         .get(3)
-        .ok_or_else(|| {
-            ProDjLinkError::Parse("missing waveform detail data in response".into())
-        })?
+        .ok_or_else(|| ProDjLinkError::Parse("missing waveform detail data in response".into()))?
         .as_binary()?
         .clone();
     WaveformDetail::from_bytes(data, WaveformStyle::Blue)
@@ -338,13 +334,13 @@ mod tests {
                 txn,
                 MessageType::MenuItem,
                 vec![
-                    Field::number(0),                 // arg 0
-                    Field::number(0),                 // arg 1
-                    Field::number(0),                 // arg 2
-                    Field::string("Test Track"),      // arg 3: text
-                    Field::number(0),                 // arg 4
-                    Field::string(""),                // arg 5
-                    Field::number(0x0004),            // arg 6: TrackTitle
+                    Field::number(0),            // arg 0
+                    Field::number(0),            // arg 1
+                    Field::number(0),            // arg 2
+                    Field::string("Test Track"), // arg 3: text
+                    Field::number(0),            // arg 4
+                    Field::string(""),           // arg 5
+                    Field::number(0x0004),       // arg 6: TrackTitle
                 ],
             );
             let footer = Message::new(txn, MessageType::MenuFooter, vec![]);
@@ -378,7 +374,10 @@ mod tests {
 
         let data_ref = DataReference::new(DeviceNumber(3), TrackSourceSlot::UsbSlot, 42);
         let args = build_metadata_request_args(&data_ref, MENU_ID_DATA);
-        let items = client.menu_request(MessageType::MetadataReq, args).await.unwrap();
+        let items = client
+            .menu_request(MessageType::MetadataReq, args)
+            .await
+            .unwrap();
         let meta = TrackMetadata::from_menu_items(data_ref, &items);
 
         assert_eq!(meta.title, "Test Track");

@@ -222,9 +222,9 @@ impl MockCdjStatusBuilder {
             device_type: 1, // CDJ
             bpm: 0.0,
             pitch_percent: 0.0,
-            play_state: 0x00,     // NoTrack
-            play_state_2: 0x6e,   // Stopped
-            play_state_3: 0x00,   // NoTrack
+            play_state: 0x00,   // NoTrack
+            play_state_2: 0x6e, // Stopped
+            play_state_3: 0x00, // NoTrack
             flags: 0,
             rekordbox_id: 0,
             track_source_player: 0,
@@ -263,7 +263,7 @@ impl MockCdjStatusBuilder {
 
     /// Set the player to "playing" state.
     pub fn playing(mut self) -> Self {
-        self.play_state = 0x03;   // Playing
+        self.play_state = 0x03; // Playing
         self.play_state_2 = 0x6a; // Moving
         self.play_state_3 = 0x0d; // ForwardCdj
         self.flags |= FLAG_PLAYING;
@@ -272,7 +272,7 @@ impl MockCdjStatusBuilder {
 
     /// Set the player to "paused" state.
     pub fn paused(mut self) -> Self {
-        self.play_state = 0x05;   // Paused
+        self.play_state = 0x05; // Paused
         self.play_state_2 = 0x6e; // Stopped
         self.play_state_3 = 0x01; // PausedOrReverse
         self.flags &= !FLAG_PLAYING;
@@ -281,7 +281,7 @@ impl MockCdjStatusBuilder {
 
     /// Set the player to "cued" state.
     pub fn cued(mut self) -> Self {
-        self.play_state = 0x06;   // Cued
+        self.play_state = 0x06; // Cued
         self.play_state_2 = 0x6e; // Stopped
         self.play_state_3 = 0x01; // PausedOrReverse
         self.flags &= !FLAG_PLAYING;
@@ -290,7 +290,7 @@ impl MockCdjStatusBuilder {
 
     /// Set the player to "looping" state.
     pub fn looping(mut self) -> Self {
-        self.play_state = 0x04;   // Looping
+        self.play_state = 0x04; // Looping
         self.play_state_2 = 0x6a; // Moving
         self.play_state_3 = 0x0d; // ForwardCdj
         self.flags |= FLAG_PLAYING;
@@ -364,7 +364,11 @@ impl MockCdjStatusBuilder {
     /// Build the raw CDJ status packet bytes.
     pub fn build(self) -> Vec<u8> {
         let needs_loop = self.loop_start.is_some();
-        let pkt_len = if needs_loop { CDJ_LOOP_THRESHOLD } else { CDJ_MIN_LEN };
+        let pkt_len = if needs_loop {
+            CDJ_LOOP_THRESHOLD
+        } else {
+            CDJ_MIN_LEN
+        };
         let mut pkt = vec![0u8; pkt_len];
 
         write_magic(&mut pkt);
@@ -391,8 +395,7 @@ impl MockCdjStatusBuilder {
         // Pitch (3 bytes)
         let pitch_raw = pitch_pct_to_raw(self.pitch_percent);
         let pitch_be = pitch_raw.to_be_bytes();
-        pkt[CDJ_PITCH_OFFSET..CDJ_PITCH_OFFSET + CDJ_PITCH_LEN]
-            .copy_from_slice(&pitch_be[1..4]);
+        pkt[CDJ_PITCH_OFFSET..CDJ_PITCH_OFFSET + CDJ_PITCH_LEN].copy_from_slice(&pitch_be[1..4]);
 
         // BPM (2 bytes, value × 100)
         let bpm_raw = bpm_to_raw(self.bpm) as u32;
@@ -420,9 +423,7 @@ impl MockCdjStatusBuilder {
         pkt[CDJ_IS_BUSY_OFFSET] = 0;
 
         // CDJ-3000 loop fields
-        if let (Some(ls), Some(le), Some(lb)) =
-            (self.loop_start, self.loop_end, self.loop_beats)
-        {
+        if let (Some(ls), Some(le), Some(lb)) = (self.loop_start, self.loop_end, self.loop_beats) {
             // Reverse the encoding: parser does raw * 65536 / 1000, so we
             // store the value that when multiplied gives the desired output.
             let ls_raw = (ls * 1000 / 65536) as u32;
@@ -593,7 +594,14 @@ impl MockBeatBuilder {
         second_bar: u32,
         eighth_beat: u32,
     ) -> Self {
-        self.timing = [next_beat, second_beat, next_bar, fourth_beat, second_bar, eighth_beat];
+        self.timing = [
+            next_beat,
+            second_beat,
+            next_bar,
+            fourth_beat,
+            second_bar,
+            eighth_beat,
+        ];
         self
     }
 
@@ -656,19 +664,16 @@ pub fn mock_precise_position(
 
     pkt[PP_TRACK_LENGTH_OFFSET..PP_TRACK_LENGTH_OFFSET + 4]
         .copy_from_slice(&track_length_s.to_be_bytes());
-    pkt[PP_POSITION_OFFSET..PP_POSITION_OFFSET + 4]
-        .copy_from_slice(&position_ms.to_be_bytes());
+    pkt[PP_POSITION_OFFSET..PP_POSITION_OFFSET + 4].copy_from_slice(&position_ms.to_be_bytes());
 
     // Pitch: signed percentage × 100
     let raw_pitch = (pitch_percent * 100.0) as i32;
-    pkt[PP_PITCH_OFFSET..PP_PITCH_OFFSET + 4]
-        .copy_from_slice(&raw_pitch.to_be_bytes());
+    pkt[PP_PITCH_OFFSET..PP_PITCH_OFFSET + 4].copy_from_slice(&raw_pitch.to_be_bytes());
 
     // BPM: effective BPM × 10 (4 bytes)
     let effective_bpm = bpm * (1.0 + pitch_percent / 100.0);
     let raw_bpm = (effective_bpm * 10.0) as u32;
-    pkt[PP_BPM_OFFSET..PP_BPM_OFFSET + 4]
-        .copy_from_slice(&raw_bpm.to_be_bytes());
+    pkt[PP_BPM_OFFSET..PP_BPM_OFFSET + 4].copy_from_slice(&raw_bpm.to_be_bytes());
 
     pkt
 }
@@ -705,12 +710,7 @@ pub fn mock_channels_on_air(device_number: u8, channels: &[bool]) -> Vec<u8> {
 // -----------------------------------------------------------------------
 
 /// Build a media details response packet.
-pub fn mock_media_details(
-    player: u8,
-    slot: u8,
-    name: &str,
-    track_count: u16,
-) -> Vec<u8> {
+pub fn mock_media_details(player: u8, slot: u8, name: &str, track_count: u16) -> Vec<u8> {
     let mut pkt = vec![0u8; MD_MIN_SIZE];
     write_magic(&mut pkt);
     pkt[0x0a] = 0x19; // media details type placeholder
@@ -750,10 +750,8 @@ pub fn mock_media_details(
     // Sizes
     let total: u64 = 32_000_000_000;
     let free: u64 = 16_000_000_000;
-    pkt[MD_TOTAL_SIZE_OFFSET..MD_TOTAL_SIZE_OFFSET + 8]
-        .copy_from_slice(&total.to_be_bytes());
-    pkt[MD_FREE_SPACE_OFFSET..MD_FREE_SPACE_OFFSET + 8]
-        .copy_from_slice(&free.to_be_bytes());
+    pkt[MD_TOTAL_SIZE_OFFSET..MD_TOTAL_SIZE_OFFSET + 8].copy_from_slice(&total.to_be_bytes());
+    pkt[MD_FREE_SPACE_OFFSET..MD_FREE_SPACE_OFFSET + 8].copy_from_slice(&free.to_be_bytes());
 
     pkt
 }

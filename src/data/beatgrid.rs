@@ -211,11 +211,7 @@ mod tests {
 
     #[test]
     fn beat_at_time_exact_match() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 469),
-            (3, 12800, 937),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 469), (3, 12800, 937)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
 
         let entry = grid.beat_at_time(469).unwrap();
@@ -225,11 +221,7 @@ mod tests {
 
     #[test]
     fn beat_at_time_closest_before() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 500),
-            (3, 12800, 1000),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 500), (3, 12800, 1000)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
 
         // 600 is closer to 500 than to 1000
@@ -240,11 +232,7 @@ mod tests {
 
     #[test]
     fn beat_at_time_closest_after() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 500),
-            (3, 12800, 1000),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 500), (3, 12800, 1000)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
 
         // 800 is closer to 1000 than to 500
@@ -275,10 +263,7 @@ mod tests {
 
     #[test]
     fn time_of_beat_valid() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 469),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 469)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
 
         assert_eq!(grid.time_of_beat(0), Some(0));
@@ -386,11 +371,7 @@ mod tests {
 
     #[test]
     fn beat_count_matches_len() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 469),
-            (3, 12800, 937),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 469), (3, 12800, 937)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
         assert_eq!(grid.beat_count(), 3);
         assert_eq!(grid.beat_count(), grid.len());
@@ -406,10 +387,7 @@ mod tests {
 
     #[test]
     fn bpm_at_valid() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 13000, 469),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 13000, 469)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
         let bpm0 = grid.bpm_at(0).unwrap();
         assert!((bpm0.0 - 128.0).abs() < f64::EPSILON);
@@ -452,11 +430,7 @@ mod tests {
 
     #[test]
     fn time_within_track_valid() {
-        let data = make_beat_grid_data(&[
-            (1, 12800, 0),
-            (2, 12800, 469),
-            (3, 12800, 937),
-        ]);
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 469), (3, 12800, 937)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
         assert_eq!(grid.time_within_track(0), Some(0));
         assert_eq!(grid.time_within_track(1), Some(469));

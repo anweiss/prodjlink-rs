@@ -151,9 +151,13 @@ mod tests {
     fn reject_too_short_packet() {
         let short = &MAGIC_HEADER[..5];
         let err = parse_header(short).unwrap_err();
-        assert!(
-            matches!(err, crate::error::ProDjLinkError::PacketTooShort { expected: 11, actual: 5 })
-        );
+        assert!(matches!(
+            err,
+            crate::error::ProDjLinkError::PacketTooShort {
+                expected: 11,
+                actual: 5
+            }
+        ));
     }
 
     #[test]

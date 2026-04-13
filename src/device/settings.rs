@@ -348,11 +348,7 @@ impl PlayerSettings {
     ///
     /// `source_device` is our virtual CDJ number; `target_device` is the player
     /// to configure.
-    pub fn build_settings_packet(
-        &self,
-        source_device: u8,
-        target_device: u8,
-    ) -> Vec<u8> {
+    pub fn build_settings_packet(&self, source_device: u8, target_device: u8) -> Vec<u8> {
         let total_len = PREFIX_LEN + SETTINGS_PAYLOAD_LEN;
         let mut buf = vec![0u8; total_len];
 
@@ -491,8 +487,12 @@ mod tests {
     #[test]
     fn lcd_brightness_round_trip() {
         for variant in [
-            LcdBrightness::White, LcdBrightness::One, LcdBrightness::Two,
-            LcdBrightness::Three, LcdBrightness::Four, LcdBrightness::Five,
+            LcdBrightness::White,
+            LcdBrightness::One,
+            LcdBrightness::Two,
+            LcdBrightness::Three,
+            LcdBrightness::Four,
+            LcdBrightness::Five,
         ] {
             assert_eq!(LcdBrightness::from_byte(variant.to_byte()), variant);
         }
@@ -507,7 +507,12 @@ mod tests {
 
     #[test]
     fn tempo_range_round_trip() {
-        for variant in [TempoRange::Six, TempoRange::Ten, TempoRange::Sixteen, TempoRange::Wide] {
+        for variant in [
+            TempoRange::Six,
+            TempoRange::Ten,
+            TempoRange::Sixteen,
+            TempoRange::Wide,
+        ] {
             assert_eq!(TempoRange::from_byte(variant.to_byte()), variant);
         }
     }
@@ -515,9 +520,15 @@ mod tests {
     #[test]
     fn auto_cue_level_round_trip() {
         for variant in [
-            AutoCueLevel::Minus36, AutoCueLevel::Minus42, AutoCueLevel::Minus48,
-            AutoCueLevel::Minus54, AutoCueLevel::Minus60, AutoCueLevel::Minus66,
-            AutoCueLevel::Minus72, AutoCueLevel::Minus78, AutoCueLevel::MemoryCue,
+            AutoCueLevel::Minus36,
+            AutoCueLevel::Minus42,
+            AutoCueLevel::Minus48,
+            AutoCueLevel::Minus54,
+            AutoCueLevel::Minus60,
+            AutoCueLevel::Minus66,
+            AutoCueLevel::Minus72,
+            AutoCueLevel::Minus78,
+            AutoCueLevel::MemoryCue,
         ] {
             assert_eq!(AutoCueLevel::from_byte(variant.to_byte()), variant);
         }
@@ -526,11 +537,24 @@ mod tests {
     #[test]
     fn language_round_trip() {
         for variant in [
-            Language::English, Language::French, Language::German, Language::Italian,
-            Language::Dutch, Language::Spanish, Language::Russian, Language::Korean,
-            Language::ChineseSimplified, Language::ChineseTraditional, Language::Japanese,
-            Language::Portuguese, Language::Swedish, Language::Czech, Language::Hungarian,
-            Language::Danish, Language::Greek, Language::Turkish,
+            Language::English,
+            Language::French,
+            Language::German,
+            Language::Italian,
+            Language::Dutch,
+            Language::Spanish,
+            Language::Russian,
+            Language::Korean,
+            Language::ChineseSimplified,
+            Language::ChineseTraditional,
+            Language::Japanese,
+            Language::Portuguese,
+            Language::Swedish,
+            Language::Czech,
+            Language::Hungarian,
+            Language::Danish,
+            Language::Greek,
+            Language::Turkish,
         ] {
             assert_eq!(Language::from_byte(variant.to_byte()), variant);
         }

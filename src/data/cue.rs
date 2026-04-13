@@ -96,7 +96,10 @@ impl CueList {
 
     /// Get all memory points.
     pub fn memory_points(&self) -> Vec<&CueEntry> {
-        self.entries.iter().filter(|e| e.is_memory_point()).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.is_memory_point())
+            .collect()
     }
 
     /// Get all loops.
@@ -317,11 +320,7 @@ fn read_u16_le(data: &[u8], offset: usize) -> Result<u16, String> {
 
 /// Safely read a single byte, returning 0 if the index is out of bounds.
 fn safely_fetch_byte(data: &[u8], index: usize) -> u8 {
-    if index < data.len() {
-        data[index]
-    } else {
-        0
-    }
+    if index < data.len() { data[index] } else { 0 }
 }
 
 /// Parse a Nexus-format binary cue list (36 bytes per entry).
@@ -379,7 +378,11 @@ pub fn parse_nexus_entries(data: &[u8]) -> Result<Vec<CueEntry>, String> {
 
         entries.push(CueEntry {
             cue_type,
-            hot_cue_number: if is_hot_cue { Some(hot_cue_number) } else { None },
+            hot_cue_number: if is_hot_cue {
+                Some(hot_cue_number)
+            } else {
+                None
+            },
             position_ms,
             loop_end_ms,
             comment: None,
@@ -540,8 +543,8 @@ pub fn parse_nxs2_entries(data: &[u8]) -> Result<Vec<CueEntry>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dbserver::message::{Message, MessageType};
     use crate::dbserver::Field;
+    use crate::dbserver::message::{Message, MessageType};
 
     fn make_memory_point(position: u32) -> CueEntry {
         CueEntry {
@@ -791,12 +794,12 @@ mod tests {
     #[test]
     fn from_menu_items_with_comment() {
         let msg = mock_menu_item(vec![
-            Field::number(0),        // arg 0
-            Field::number(1),        // arg 1: hot cue 1
-            Field::number(0),        // arg 2
-            Field::number(8000),     // arg 3: position
-            Field::number(0),        // arg 4: no loop
-            Field::string("Drop!"),  // arg 5: comment
+            Field::number(0),       // arg 0
+            Field::number(1),       // arg 1: hot cue 1
+            Field::number(0),       // arg 2
+            Field::number(8000),    // arg 3: position
+            Field::number(0),       // arg 4: no loop
+            Field::string("Drop!"), // arg 5: comment
         ]);
         let list = CueList::from_menu_items(&[msg]);
         assert_eq!(list.len(), 1);

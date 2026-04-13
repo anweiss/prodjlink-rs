@@ -74,10 +74,9 @@ pub fn extract_art_from_response(
     response: &crate::dbserver::message::Message,
 ) -> crate::error::Result<AlbumArt> {
     // The album art is typically in arg 3 as a BinaryField
-    let field = response
-        .args
-        .get(3)
-        .ok_or_else(|| crate::error::ProDjLinkError::Parse("missing art data in response".into()))?;
+    let field = response.args.get(3).ok_or_else(|| {
+        crate::error::ProDjLinkError::Parse("missing art data in response".into())
+    })?;
     let data = field.as_binary()?.clone();
     Ok(AlbumArt::new(art_ref, data))
 }
@@ -165,9 +164,9 @@ mod tests {
             1,
             MessageType::AlbumArtReq,
             vec![
-                Field::number(0),            // arg 0
-                Field::number(0),            // arg 1
-                Field::number(0),            // arg 2
+                Field::number(0),                  // arg 0
+                Field::number(0),                  // arg 1
+                Field::number(0),                  // arg 2
                 Field::binary(jpeg_bytes.clone()), // arg 3: art data
             ],
         );

@@ -15,7 +15,11 @@ pub fn device_discovery_sequence(name: &str, device_number: u8) -> Vec<Vec<u8>> 
 ///
 /// 1. NoTrack → Loading → Cued → Playing
 pub fn track_load_and_play_sequence(device_number: u8, rekordbox_id: u32) -> Vec<Vec<u8>> {
-    let base = || MockCdjStatusBuilder::new(device_number).bpm(128.0).usb_loaded();
+    let base = || {
+        MockCdjStatusBuilder::new(device_number)
+            .bpm(128.0)
+            .usb_loaded()
+    };
 
     vec![
         // 1. No track loaded
@@ -111,7 +115,14 @@ pub fn four_bar_beat_sequence(device_number: u8, bpm: f64) -> Vec<Vec<u8>> {
             MockBeatBuilder::new(device_number)
                 .bpm(bpm)
                 .beat_within_bar(beat_in_bar)
-                .timing(next_beat, second_beat, next_bar, fourth_beat, second_bar, eighth_beat)
+                .timing(
+                    next_beat,
+                    second_beat,
+                    next_bar,
+                    fourth_beat,
+                    second_bar,
+                    eighth_beat,
+                )
                 .build()
         })
         .collect()
