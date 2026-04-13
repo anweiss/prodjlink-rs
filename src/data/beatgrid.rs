@@ -101,6 +101,23 @@ impl BeatGrid {
     pub fn time_of_beat(&self, beat_index: usize) -> Option<u32> {
         self.entries.get(beat_index).map(|e| e.time_ms)
     }
+
+    /// Get the bar number for a given beat index (0-indexed).
+    ///
+    /// Handles incomplete first bars (e.g. if the track starts on beat 3).
+    /// Returns 1-based bar numbers, or `None` if the index is out of range.
+    pub fn bar_number(&self, beat_index: usize) -> Option<u32> {
+        if beat_index >= self.entries.len() {
+            return None;
+        }
+        let mut bar = 1u32;
+        for i in 1..=beat_index {
+            if self.entries[i].beat_within_bar <= self.entries[i - 1].beat_within_bar {
+                bar += 1;
+            }
+        }
+        Some(bar)
+    }
 }
 
 #[cfg(test)]
@@ -263,5 +280,68 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("too short"));
+    }
+
+    // --- bar_number tests ---
+
+    #[test]
+    fn bar_number_normal_four_beat_bars() {
+        // Two full bars: 1,2,3,4 | 1,2,3,4
+        let data = make_beat_grid_data(&[
+            (1, 12800, 0),
+            (2, 12800, 469),
+            (3, 12800, 937),
+            (4, 12800, 1404),
+            (1, 12800, 1872),
+            (2, 12800, 2340),
+            (3, 12800, 2808),
+            (4, 12800, 3276),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.bar_number(0), Some(1)); // beat 1 of bar 1
+        assert_eq!(grid.bar_number(1), Some(1)); // beat 2 of bar 1
+        assert_eq!(grid.bar_number(2), Some(1)); // beat 3 of bar 1
+        assert_eq!(grid.bar_number(3), Some(1)); // beat 4 of bar 1
+        assert_eq!(grid.bar_number(4), Some(2)); // beat 1 of bar 2
+        assert_eq!(grid.bar_number(7), Some(2)); // beat 4 of bar 2
+    }
+
+    #[test]
+    fn bar_number_incomplete_first_bar() {
+        // Track starts on beat 3: 3,4 | 1,2,3,4
+        let data = make_beat_grid_data(&[
+            (3, 12800, 0),
+            (4, 12800, 469),
+            (1, 12800, 937),
+            (2, 12800, 1404),
+            (3, 12800, 1872),
+            (4, 12800, 2340),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.bar_number(0), Some(1)); // beat 3 of bar 1
+        assert_eq!(grid.bar_number(1), Some(1)); // beat 4 of bar 1
+        assert_eq!(grid.bar_number(2), Some(2)); // beat 1 of bar 2
+        assert_eq!(grid.bar_number(5), Some(2)); // beat 4 of bar 2
+    }
+
+    #[test]
+    fn bar_number_out_of_bounds() {
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 469)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.bar_number(2), None);
+        assert_eq!(grid.bar_number(100), None);
+    }
+
+    #[test]
+    fn bar_number_empty_grid() {
+        let grid = BeatGrid::from_bytes(&[0u8; HEADER_SIZE]).unwrap();
+        assert_eq!(grid.bar_number(0), None);
+    }
+
+    #[test]
+    fn bar_number_single_beat() {
+        let data = make_beat_grid_data(&[(1, 12800, 0)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.bar_number(0), Some(1));
     }
 }
