@@ -13,6 +13,7 @@ if-addrs = "0.13"
 mac_address = "1"
 socket2 = { version = "0.5", features = ["all"] }
 async-trait = "0.1.89"
+sha1 = "0.10"
 
 [dev-dependencies]
 tokio-test = "0.4"

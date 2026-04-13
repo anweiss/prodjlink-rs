@@ -141,6 +141,20 @@ impl BeatGrid {
     pub fn time_within_track(&self, beat_index: usize) -> Option<u32> {
         self.entries.get(beat_index).map(|e| e.time_ms)
     }
+
+    /// Serialize the beat grid back to raw bytes (header + entries).
+    pub fn raw_data(&self) -> Vec<u8> {
+        let mut data = vec![0u8; HEADER_SIZE];
+        for entry in &self.entries {
+            let mut buf = vec![0u8; ENTRY_SIZE];
+            buf[0..2].copy_from_slice(&entry.beat_within_bar.to_le_bytes());
+            let raw_tempo = (entry.tempo * 100.0) as u16;
+            buf[2..4].copy_from_slice(&raw_tempo.to_le_bytes());
+            buf[4..8].copy_from_slice(&entry.time_ms.to_le_bytes());
+            data.extend_from_slice(&buf);
+        }
+        data
+    }
 }
 
 #[cfg(test)]

@@ -63,6 +63,10 @@ pub use data::network_provider::NetworkProvider;
 pub use data::provider::MetadataProvider;
 pub use data::waveform::{WaveformDetail, WaveformPreview, WaveformStyle};
 
+// Analysis / signature
+pub use data::analysis::{AnlzFileType, AnlzTag, AnlzTagType, fetch_anlz_tag, parse_anlz_tags};
+pub use data::signature::{TrackSignature, signature_from_metadata};
+
 // DBServer
 pub use dbserver::connection::ConnectionManager;
 

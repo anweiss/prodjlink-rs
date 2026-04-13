@@ -234,6 +234,11 @@ impl WaveformDetail {
         !matches!(self.style, WaveformStyle::Blue)
     }
 
+    /// Access the raw frame data bytes (after header stripping).
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
     /// Parse a waveform detail from raw data bytes (from dbserver BinaryField).
     pub fn from_bytes(data: Bytes, style: WaveformStyle) -> crate::error::Result<Self> {
         let skip = match style {
