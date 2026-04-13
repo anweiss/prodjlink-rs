@@ -1149,4 +1149,177 @@ mod tests {
 
         vcdj.stop();
     }
+
+    // === Command Reception Tests ===
+
+    #[test]
+    fn try_parse_command_rejects_short_packet() {
+        assert!(try_parse_command(&[0u8; 5]).is_none());
+    }
+
+    #[test]
+    fn try_parse_command_rejects_bad_magic() {
+        let mut pkt = [0u8; 0x30];
+        pkt[0x0a] = FADER_START_TYPE;
+        assert!(try_parse_command(&pkt).is_none());
+    }
+
+    #[test]
+    fn try_parse_command_rejects_unknown_type() {
+        let mut pkt = [0u8; 0x30];
+        pkt[..10].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0xFF;
+        assert!(try_parse_command(&pkt).is_none());
+    }
+
+    #[test]
+    fn round_trip_fader_start_command() {
+        // Build a fader-start packet using the protocol builder, then parse it
+        let pkt = command::build_fader_start(
+            DeviceNumber(5),
+            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+        );
+        let event = try_parse_command(&pkt).expect("should parse fader_start");
+        match event {
+            CommandEvent::FaderStart {
+                source_device,
+                channels,
+            } => {
+                assert_eq!(source_device, 5);
+                assert_eq!(channels[0], FaderAction::Start);
+                assert_eq!(channels[1], FaderAction::Stop);
+                assert_eq!(channels[2], FaderAction::NoChange);
+                assert_eq!(channels[3], FaderAction::Start);
+            }
+            _ => panic!("expected FaderStart"),
+        }
+    }
+
+    #[test]
+    fn round_trip_fader_start_single() {
+        let pkt = command::build_fader_start_single(DeviceNumber(1), DeviceNumber(3), false);
+        let event = try_parse_command(&pkt).unwrap();
+        match event {
+            CommandEvent::FaderStart {
+                source_device,
+                channels,
+            } => {
+                assert_eq!(source_device, 1);
+                assert_eq!(channels[0], FaderAction::NoChange);
+                assert_eq!(channels[1], FaderAction::NoChange);
+                assert_eq!(channels[2], FaderAction::Stop);
+                assert_eq!(channels[3], FaderAction::NoChange);
+            }
+            _ => panic!("expected FaderStart"),
+        }
+    }
+
+    #[test]
+    fn round_trip_load_track_command() {
+        let pkt = command::build_load_track(
+            DeviceNumber(5),
+            DeviceNumber(3),
+            DeviceNumber(2),
+            TrackSourceSlot::UsbSlot,
+            TrackType::Rekordbox,
+            12345,
+        );
+        let event = try_parse_command(&pkt).expect("should parse load_track");
+        match event {
+            CommandEvent::LoadTrack {
+                source_device,
+                source_player,
+                source_slot,
+                track_type,
+                rekordbox_id,
+            } => {
+                assert_eq!(source_device, 5);
+                assert_eq!(source_player, 2);
+                assert_eq!(source_slot, TrackSourceSlot::UsbSlot);
+                assert_eq!(track_type, TrackType::Rekordbox);
+                assert_eq!(rekordbox_id, 12345);
+            }
+            _ => panic!("expected LoadTrack"),
+        }
+    }
+
+    #[test]
+    fn load_track_with_various_slots() {
+        for (slot, expected_byte) in [
+            (TrackSourceSlot::SdSlot, 2u8),
+            (TrackSourceSlot::CdSlot, 1),
+            (TrackSourceSlot::Collection, 4),
+        ] {
+            let pkt = command::build_load_track(
+                DeviceNumber(1),
+                DeviceNumber(2),
+                DeviceNumber(3),
+                slot,
+                TrackType::Unanalyzed,
+                999,
+            );
+            let event = try_parse_command(&pkt).unwrap();
+            if let CommandEvent::LoadTrack { source_slot, .. } = event {
+                assert_eq!(u8::from(source_slot), expected_byte);
+            } else {
+                panic!("expected LoadTrack");
+            }
+        }
+    }
+
+    #[test]
+    fn fader_start_too_short_returns_none() {
+        // Packet with valid header but too short for fader_start payload
+        let mut pkt = vec![0u8; 0x25]; // need at least 0x28
+        pkt[..10].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = FADER_START_TYPE;
+        assert!(try_parse_command(&pkt).is_none());
+    }
+
+    #[test]
+    fn load_track_too_short_returns_none() {
+        let mut pkt = vec![0u8; 0x2e]; // need at least 0x30
+        pkt[..10].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = LOAD_TRACK_TYPE;
+        assert!(try_parse_command(&pkt).is_none());
+    }
+
+    #[test]
+    fn byte_to_fader_action_values() {
+        assert_eq!(byte_to_fader_action(0x00), FaderAction::Start);
+        assert_eq!(byte_to_fader_action(0x01), FaderAction::Stop);
+        assert_eq!(byte_to_fader_action(0x02), FaderAction::NoChange);
+        assert_eq!(byte_to_fader_action(0xFF), FaderAction::NoChange);
+    }
+
+    #[test]
+    fn command_event_is_debug_clone_eq() {
+        let event = CommandEvent::FaderStart {
+            source_device: 1,
+            channels: [FaderAction::Start; 4],
+        };
+        let cloned = event.clone();
+        assert_eq!(event, cloned);
+        let _ = format!("{:?}", event);
+    }
+
+    #[test]
+    fn resolve_mac_loopback_returns_placeholder() {
+        let mac = resolve_mac(Ipv4Addr::LOCALHOST, 5);
+        assert_eq!(mac, [0x02, 0x00, 0x00, 0x00, 0x00, 5]);
+    }
+
+    #[test]
+    fn resolve_mac_unspecified_returns_placeholder() {
+        let mac = resolve_mac(Ipv4Addr::UNSPECIFIED, 7);
+        assert_eq!(mac, [0x02, 0x00, 0x00, 0x00, 0x00, 7]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_commands_returns_receiver() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        let _rx = vcdj.subscribe_commands();
+        vcdj.stop();
+    }
 }

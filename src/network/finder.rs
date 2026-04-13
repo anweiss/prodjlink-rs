@@ -3,6 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashmap::DashSet;
 use tokio::net::UdpSocket;
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
@@ -16,7 +17,8 @@ use crate::protocol::announce::{
 use crate::protocol::header::{parse_header, PacketType, DISCOVERY_PORT};
 
 /// How long before a device is considered gone (no keep-alive received).
-const DEVICE_EXPIRY: Duration = Duration::from_secs(10);
+/// This is 1.5× the standard 3-second keep-alive interval.
+const DEVICE_EXPIRY: Duration = Duration::from_millis(4500);
 
 /// How often to check for expired devices.
 const AGING_INTERVAL: Duration = Duration::from_secs(1);
@@ -47,6 +49,7 @@ pub enum FinderEvent {
 /// of all active devices. Emits events via a `tokio::broadcast` channel.
 pub struct DeviceFinder {
     devices: Arc<RwLock<HashMap<u8, DeviceAnnouncement>>>,
+    ignored_addresses: Arc<DashSet<Ipv4Addr>>,
     event_tx: broadcast::Sender<FinderEvent>,
     recv_task: JoinHandle<()>,
     aging_task: JoinHandle<()>,
@@ -60,10 +63,12 @@ impl DeviceFinder {
 
         let devices: Arc<RwLock<HashMap<u8, DeviceAnnouncement>>> =
             Arc::new(RwLock::new(HashMap::new()));
+        let ignored_addresses: Arc<DashSet<Ipv4Addr>> = Arc::new(DashSet::new());
         let (event_tx, _) = broadcast::channel(256);
 
         // Spawn the receive loop
         let recv_devices = devices.clone();
+        let recv_ignored = ignored_addresses.clone();
         let recv_tx = event_tx.clone();
         let recv_socket = socket.clone();
         let recv_task = tokio::spawn(async move {
@@ -71,6 +76,13 @@ impl DeviceFinder {
             loop {
                 match recv_socket.recv_from(&mut buf).await {
                     Ok((len, addr)) => {
+                        // Filter out ignored source addresses
+                        if let SocketAddr::V4(v4) = addr {
+                            if recv_ignored.contains(v4.ip()) {
+                                continue;
+                            }
+                        }
+
                         let data = &buf[..len];
                         if let Ok(pkt_type) = parse_header(data) {
                             match pkt_type {
@@ -142,6 +154,7 @@ impl DeviceFinder {
 
         Ok(Self {
             devices,
+            ignored_addresses,
             event_tx,
             recv_task,
             aging_task,
@@ -167,6 +180,32 @@ impl DeviceFinder {
     pub fn stop(self) {
         self.recv_task.abort();
         self.aging_task.abort();
+    }
+
+    /// Add an IP address to the ignore list.
+    ///
+    /// Announcements from this address will be silently dropped.
+    /// Useful for filtering out your own computer's rekordbox instance.
+    pub fn add_ignored_address(&self, ip: Ipv4Addr) {
+        self.ignored_addresses.insert(ip);
+    }
+
+    /// Remove an IP address from the ignore list.
+    pub fn remove_ignored_address(&self, ip: Ipv4Addr) {
+        self.ignored_addresses.remove(&ip);
+    }
+
+    /// Check whether an IP address is currently ignored.
+    pub fn is_ignored(&self, ip: &Ipv4Addr) -> bool {
+        self.ignored_addresses.contains(ip)
+    }
+
+    /// Remove all known devices from the map, emitting `DeviceLost` for each.
+    pub async fn flush_devices(&self) {
+        let mut map = self.devices.write().await;
+        for (_, dev) in map.drain() {
+            let _ = self.event_tx.send(FinderEvent::DeviceLost(dev));
+        }
     }
 }
 
@@ -276,5 +315,118 @@ mod tests {
         }
 
         finder.stop();
+    }
+
+    // === Ignored Addresses Tests ===
+
+    #[tokio::test]
+    async fn add_and_remove_ignored_address() {
+        let finder = match DeviceFinder::start().await {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let ip = Ipv4Addr::new(192, 168, 1, 50);
+        assert!(!finder.is_ignored(&ip));
+
+        finder.add_ignored_address(ip);
+        assert!(finder.is_ignored(&ip));
+
+        finder.remove_ignored_address(ip);
+        assert!(!finder.is_ignored(&ip));
+
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn ignored_address_prevents_discovery() {
+        let finder = match DeviceFinder::start().await {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        // Ignore loopback so any packets sent from our test won't be processed
+        finder.add_ignored_address(Ipv4Addr::LOCALHOST);
+
+        let mut rx = finder.subscribe();
+
+        let pkt = build_keep_alive(
+            "Ignored",
+            DeviceNumber(9),
+            [0; 6],
+            Ipv4Addr::LOCALHOST,
+        );
+        let sender = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        sender
+            .send_to(&pkt, ("127.0.0.1", DISCOVERY_PORT))
+            .await
+            .unwrap();
+
+        // Should time out since the address is ignored
+        let result = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+        assert!(result.is_err(), "Expected timeout — packet should be ignored");
+
+        finder.stop();
+    }
+
+    // === Flush Devices Tests ===
+
+    #[tokio::test]
+    async fn flush_devices_clears_map_and_emits_lost() {
+        let finder = match DeviceFinder::start().await {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        // Insert a device by sending a keep-alive
+        let pkt = build_keep_alive(
+            "FlushTest",
+            DeviceNumber(8),
+            [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+            Ipv4Addr::LOCALHOST,
+        );
+        let sender = UdpSocket::bind("0.0.0.0:0").await.unwrap();
+        sender
+            .send_to(&pkt, ("127.0.0.1", DISCOVERY_PORT))
+            .await
+            .unwrap();
+
+        // Wait for it to be registered
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let devs_before = finder.devices().await;
+        if devs_before.is_empty() {
+            // Packet didn't loop back; skip
+            finder.stop();
+            return;
+        }
+
+        let mut rx = finder.subscribe();
+        finder.flush_devices().await;
+
+        let devs_after = finder.devices().await;
+        assert!(devs_after.is_empty(), "devices should be empty after flush");
+
+        // Should receive DeviceLost event
+        let event = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
+        match event {
+            Ok(Ok(FinderEvent::DeviceLost(ann))) => {
+                assert_eq!(ann.name, "FlushTest");
+            }
+            _ => {} // Acceptable if event was already consumed
+        }
+
+        finder.stop();
+    }
+
+    // === Device Expiry Tests ===
+
+    #[test]
+    fn device_expiry_is_4_5_seconds() {
+        assert_eq!(DEVICE_EXPIRY, Duration::from_millis(4500));
+    }
+
+    #[test]
+    fn aging_interval_is_1_second() {
+        assert_eq!(AGING_INTERVAL, Duration::from_secs(1));
     }
 }

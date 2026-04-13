@@ -10,6 +10,25 @@ use crate::error::Result;
 use crate::protocol::header::STATUS_PORT;
 use crate::protocol::status::{parse_status, DeviceUpdate};
 
+/// Create a UDP socket bound to `STATUS_PORT` with `SO_REUSEADDR` +
+/// `SO_REUSEPORT` so it can coexist with the command listener in
+/// [`super::virtual_cdj::VirtualCdj`].
+fn create_status_socket() -> std::io::Result<UdpSocket> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )?;
+    socket.set_reuse_address(true)?;
+    #[cfg(not(windows))]
+    socket.set_reuse_port(true)?;
+    socket.set_nonblocking(true)?;
+    let addr: std::net::SocketAddr = ([0, 0, 0, 0], STATUS_PORT).into();
+    socket.bind(&addr.into())?;
+    let std_socket: std::net::UdpSocket = socket.into();
+    UdpSocket::from_std(std_socket)
+}
+
 /// Async service that listens for CDJ and mixer status updates on UDP port 50002.
 ///
 /// Incoming packets are parsed into [`DeviceUpdate`] values, broadcast to all
@@ -24,7 +43,7 @@ pub struct StatusListener {
 impl StatusListener {
     /// Bind to the status port and begin receiving device updates.
     pub async fn start() -> Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", STATUS_PORT)).await?;
+        let socket = create_status_socket()?;
         let socket = Arc::new(socket);
         let (event_tx, _) = broadcast::channel(512);
         let latest: Arc<RwLock<HashMap<u8, DeviceUpdate>>> =
