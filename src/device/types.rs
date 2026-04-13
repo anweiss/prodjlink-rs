@@ -380,6 +380,86 @@ pub fn unmap_opus_quad_device(player_num: u8, lighting: bool) -> u8 {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SlotReference
+// ---------------------------------------------------------------------------
+
+/// A reference to a specific media slot on a specific player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SlotReference {
+    pub player: DeviceNumber,
+    pub slot: TrackSourceSlot,
+}
+
+impl SlotReference {
+    pub fn new(player: DeviceNumber, slot: TrackSourceSlot) -> Self {
+        Self { player, slot }
+    }
+}
+
+impl fmt::Display for SlotReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Player {} {:?}", self.player, self.slot)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DeckReference
+// ---------------------------------------------------------------------------
+
+/// A reference to a specific deck (player + hot cue number).
+/// hot_cue = 0 means the main deck, 1-8 are hot cue slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeckReference {
+    pub player: DeviceNumber,
+    pub hot_cue: u8,
+}
+
+impl DeckReference {
+    pub fn new(player: DeviceNumber, hot_cue: u8) -> Self {
+        Self { player, hot_cue }
+    }
+
+    /// Reference to the main deck of a player (not a hot cue).
+    pub fn main_deck(player: DeviceNumber) -> Self {
+        Self { player, hot_cue: 0 }
+    }
+}
+
+impl fmt::Display for DeckReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.hot_cue == 0 {
+            write!(f, "Player {}", self.player)
+        } else {
+            write!(f, "Player {} Hot Cue {}", self.player, self.hot_cue)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PlaybackState
+// ---------------------------------------------------------------------------
+
+/// An immutable snapshot of a player's playback position.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaybackState {
+    pub player: DeviceNumber,
+    /// Current playback position in milliseconds.
+    pub position: u64,
+    /// Whether the player is currently playing.
+    pub playing: bool,
+}
+
+impl PlaybackState {
+    pub fn new(player: DeviceNumber, position: u64, playing: bool) -> Self {
+        Self {
+            player,
+            position,
+            playing,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
