@@ -78,6 +78,30 @@ impl Beat {
     pub fn is_beat_within_bar_meaningful(&self) -> bool {
         self.device_number.0 < 33
     }
+
+    /// Whether this beat came from the current tempo master.
+    ///
+    /// Beat packets do not carry master/sync flags, so this always returns
+    /// `false`.  Use [`CdjStatus::is_tempo_master`] for authoritative state.
+    pub fn is_tempo_master(&self) -> bool {
+        false
+    }
+
+    /// Whether the device that sent this beat is synced.
+    ///
+    /// Beat packets do not carry sync flags, so this always returns `false`.
+    /// Use [`CdjStatus::is_synced`] for authoritative state.
+    pub fn is_synced(&self) -> bool {
+        false
+    }
+
+    /// The device number that master is being yielded to, if any.
+    ///
+    /// Beat packets do not carry handoff information, so this always returns
+    /// `None`.
+    pub fn device_master_is_being_yielded_to(&self) -> Option<DeviceNumber> {
+        None
+    }
 }
 
 /// Precise playback position from CDJ-3000 and newer (type 0x0b, sent ~30 ms).
@@ -730,6 +754,27 @@ mod tests {
         let pkt = make_beat_packet("DJM-900NXS2", 33, 2, 12800, 0x100000, 1);
         let beat = parse_beat(&pkt).unwrap();
         assert!(!beat.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn beat_is_tempo_master_always_false() {
+        let pkt = make_beat_packet("CDJ-2000NXS2", 1, 1, 12800, 0x100000, 1);
+        let beat = parse_beat(&pkt).unwrap();
+        assert!(!beat.is_tempo_master());
+    }
+
+    #[test]
+    fn beat_is_synced_always_false() {
+        let pkt = make_beat_packet("CDJ-2000NXS2", 1, 1, 12800, 0x100000, 1);
+        let beat = parse_beat(&pkt).unwrap();
+        assert!(!beat.is_synced());
+    }
+
+    #[test]
+    fn beat_master_yielded_to_always_none() {
+        let pkt = make_beat_packet("CDJ-2000NXS2", 1, 1, 12800, 0x100000, 1);
+        let beat = parse_beat(&pkt).unwrap();
+        assert!(beat.device_master_is_being_yielded_to().is_none());
     }
 
     // -- parse_precise_position tests --
