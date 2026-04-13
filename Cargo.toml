@@ -17,3 +17,9 @@ sha1 = "0.10"
 
 [dev-dependencies]
 tokio-test = "0.4"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "virtual-cdj3000"
+path = "examples/virtual_cdj3000.rs"
