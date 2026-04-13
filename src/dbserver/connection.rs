@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -74,15 +76,15 @@ impl ConnectionManager {
 
     /// Execute a closure with a client connection to the given player.
     /// Handles connection caching and reconnection.
-    pub async fn with_client<F, Fut, T>(
+    pub async fn with_client<F, T>(
         &self,
         player: DeviceNumber,
         player_ip: Ipv4Addr,
         f: F,
     ) -> Result<T>
     where
-        F: FnOnce(&mut Client) -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
+        F: for<'a> FnOnce(&'a mut Client) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>,
+        T: Send,
     {
         let mut pool = self.pool.lock().await;
 
