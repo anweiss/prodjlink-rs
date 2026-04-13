@@ -30,9 +30,10 @@ pub use protocol::status::{
 // Network services
 pub use network::beat::{BeatEvent, BeatFinder};
 pub use network::finder::{DeviceFinder, FinderEvent};
+pub use network::interface::{find_interface_by_ip, find_matching_interface, NetworkInterface};
 pub use network::status::StatusListener;
 pub use network::tempo::{MasterState, TempoMaster, TempoMasterEvent};
-pub use network::virtual_cdj::{VirtualCdj, VirtualCdjConfig};
+pub use network::virtual_cdj::{CommandEvent, VirtualCdj, VirtualCdjConfig};
 
 // Data types
 pub use data::artwork::{AlbumArt, ArtworkReference, ImageFormat};
