@@ -11,56 +11,182 @@ pub const MAX_ARGS: usize = 12;
 /// Known dbserver message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageType {
+    // Lifecycle
     SetupReq,
-    MenuAvailable,
-    MenuHeader,
-    MenuItem,
-    MenuFooter,
+    InvalidData,
+    TeardownReq,
+
+    // Root menu requests
+    RootMenuReq,
+    GenreMenuReq,
+    ArtistMenuReq,
+    AlbumMenuReq,
+    TrackMenuReq,
+    BpmMenuReq,
+    RatingMenuReq,
+    YearMenuReq,
+    LabelMenuReq,
+    ColorMenuReq,
+    TimeMenuReq,
+    BitRateMenuReq,
+    HistoryMenuReq,
+    FilenameMenuReq,
+    KeyMenuReq,
+
+    // Filtered menu requests (single filter)
+    ArtistMenuForGenreReq,
+    AlbumMenuForArtistReq,
+    TrackMenuForAlbumReq,
+    PlaylistReq,
+    BpmRangeReq,
+    TrackMenuForRatingReq,
+    YearMenuForDecadeReq,
+    ArtistMenuForLabelReq,
+    TrackMenuForColorReq,
+    TrackMenuForTimeReq,
+    TrackMenuForBitRateReq,
+    TrackMenuForHistoryReq,
+    NeighborMenuForKeyReq,
+
+    // Filtered menu requests (two filters)
+    AlbumMenuForGenreAndArtistReq,
+    TrackMenuForArtistAndAlbumReq,
+    TrackMenuForBpmAndDistanceReq,
+    TrackMenuForDecadeAndYearReq,
+    AlbumMenuForLabelAndArtistReq,
+    TrackMenuForKeyAndDistanceReq,
+
+    // Search and multi-filter
+    SearchMenuReq,
+    TrackMenuForGenreArtistAndAlbumReq,
+    OriginalArtistMenuReq,
+    TrackMenuForLabelArtistAndAlbumReq,
+
+    // Original artist / remixer chain
+    AlbumMenuForOriginalArtistReq,
+    TrackMenuForOriginalArtistAndAlbumReq,
+    RemixerMenuReq,
+    AlbumMenuForRemixerReq,
+    TrackMenuForRemixerAndAlbumReq,
+
+    // Data requests
     MetadataReq,
     AlbumArtReq,
     WaveformPreviewReq,
-    WaveformDetailReq,
+    FolderMenuReq,
     CueListReq,
-    CueListExtReq,
+    UnanalyzedMetadataReq,
     BeatGridReq,
+    WaveformDetailReq,
+    CueListExtReq,
     AnlzTagReq,
     RenderMenuReq,
+
+    // Responses
+    MenuAvailable,
+    MenuHeader,
     AlbumArtResponse,
+    Unavailable,
+    MenuItem,
+    MenuFooter,
     WaveformPreviewResponse,
     BeatGridResponse,
     CueListResponse,
     WaveformDetailResponse,
     CueListExtResponse,
     AnlzTagResponse,
-    Unavailable,
+
     Unknown(u16),
 }
 
 impl From<u16> for MessageType {
     fn from(value: u16) -> Self {
         match value {
+            // Lifecycle
             0x0000 => MessageType::SetupReq,
-            0x4000 => MessageType::MenuAvailable,
-            0x4001 => MessageType::MenuHeader,
-            0x4101 => MessageType::MenuItem,
-            0x4201 => MessageType::MenuFooter,
+            0x0001 => MessageType::InvalidData,
+            0x0100 => MessageType::TeardownReq,
+
+            // Root menu requests
+            0x1000 => MessageType::RootMenuReq,
+            0x1001 => MessageType::GenreMenuReq,
+            0x1002 => MessageType::ArtistMenuReq,
+            0x1003 => MessageType::AlbumMenuReq,
+            0x1004 => MessageType::TrackMenuReq,
+            0x1006 => MessageType::BpmMenuReq,
+            0x1007 => MessageType::RatingMenuReq,
+            0x1008 => MessageType::YearMenuReq,
+            0x100a => MessageType::LabelMenuReq,
+            0x100d => MessageType::ColorMenuReq,
+            0x1010 => MessageType::TimeMenuReq,
+            0x1011 => MessageType::BitRateMenuReq,
+            0x1012 => MessageType::HistoryMenuReq,
+            0x1013 => MessageType::FilenameMenuReq,
+            0x1014 => MessageType::KeyMenuReq,
+
+            // Filtered menu requests (single filter)
+            0x1101 => MessageType::ArtistMenuForGenreReq,
+            0x1102 => MessageType::AlbumMenuForArtistReq,
+            0x1103 => MessageType::TrackMenuForAlbumReq,
+            0x1105 => MessageType::PlaylistReq,
+            0x1106 => MessageType::BpmRangeReq,
+            0x1107 => MessageType::TrackMenuForRatingReq,
+            0x1108 => MessageType::YearMenuForDecadeReq,
+            0x110a => MessageType::ArtistMenuForLabelReq,
+            0x110d => MessageType::TrackMenuForColorReq,
+            0x1110 => MessageType::TrackMenuForTimeReq,
+            0x1111 => MessageType::TrackMenuForBitRateReq,
+            0x1112 => MessageType::TrackMenuForHistoryReq,
+            0x1114 => MessageType::NeighborMenuForKeyReq,
+
+            // Filtered menu requests (two filters)
+            0x1201 => MessageType::AlbumMenuForGenreAndArtistReq,
+            0x1202 => MessageType::TrackMenuForArtistAndAlbumReq,
+            0x1206 => MessageType::TrackMenuForBpmAndDistanceReq,
+            0x1208 => MessageType::TrackMenuForDecadeAndYearReq,
+            0x120a => MessageType::AlbumMenuForLabelAndArtistReq,
+            0x1214 => MessageType::TrackMenuForKeyAndDistanceReq,
+
+            // Search and multi-filter
+            0x1300 => MessageType::SearchMenuReq,
+            0x1301 => MessageType::TrackMenuForGenreArtistAndAlbumReq,
+            0x1302 => MessageType::OriginalArtistMenuReq,
+            0x130a => MessageType::TrackMenuForLabelArtistAndAlbumReq,
+
+            // Original artist / remixer chain
+            0x1402 => MessageType::AlbumMenuForOriginalArtistReq,
+            0x1502 => MessageType::TrackMenuForOriginalArtistAndAlbumReq,
+            0x1602 => MessageType::RemixerMenuReq,
+            0x1702 => MessageType::AlbumMenuForRemixerReq,
+            0x1802 => MessageType::TrackMenuForRemixerAndAlbumReq,
+
+            // Data requests
             0x2002 => MessageType::MetadataReq,
             0x2003 => MessageType::AlbumArtReq,
             0x2004 => MessageType::WaveformPreviewReq,
-            0x2904 => MessageType::WaveformDetailReq,
+            0x2006 => MessageType::FolderMenuReq,
             0x2104 => MessageType::CueListReq,
-            0x2b04 => MessageType::CueListExtReq,
+            0x2202 => MessageType::UnanalyzedMetadataReq,
             0x2204 => MessageType::BeatGridReq,
+            0x2904 => MessageType::WaveformDetailReq,
+            0x2b04 => MessageType::CueListExtReq,
             0x2c04 => MessageType::AnlzTagReq,
             0x3000 => MessageType::RenderMenuReq,
+
+            // Responses
+            0x4000 => MessageType::MenuAvailable,
+            0x4001 => MessageType::MenuHeader,
             0x4002 => MessageType::AlbumArtResponse,
+            0x4003 => MessageType::Unavailable,
+            0x4101 => MessageType::MenuItem,
+            0x4201 => MessageType::MenuFooter,
             0x4402 => MessageType::WaveformPreviewResponse,
             0x4602 => MessageType::BeatGridResponse,
             0x4702 => MessageType::CueListResponse,
             0x4a02 => MessageType::WaveformDetailResponse,
             0x4e02 => MessageType::CueListExtResponse,
             0x4f02 => MessageType::AnlzTagResponse,
-            0x4003 => MessageType::Unavailable,
+
             other => MessageType::Unknown(other),
         }
     }
@@ -69,28 +195,91 @@ impl From<u16> for MessageType {
 impl From<MessageType> for u16 {
     fn from(mt: MessageType) -> u16 {
         match mt {
+            // Lifecycle
             MessageType::SetupReq => 0x0000,
-            MessageType::MenuAvailable => 0x4000,
-            MessageType::MenuHeader => 0x4001,
-            MessageType::MenuItem => 0x4101,
-            MessageType::MenuFooter => 0x4201,
+            MessageType::InvalidData => 0x0001,
+            MessageType::TeardownReq => 0x0100,
+
+            // Root menu requests
+            MessageType::RootMenuReq => 0x1000,
+            MessageType::GenreMenuReq => 0x1001,
+            MessageType::ArtistMenuReq => 0x1002,
+            MessageType::AlbumMenuReq => 0x1003,
+            MessageType::TrackMenuReq => 0x1004,
+            MessageType::BpmMenuReq => 0x1006,
+            MessageType::RatingMenuReq => 0x1007,
+            MessageType::YearMenuReq => 0x1008,
+            MessageType::LabelMenuReq => 0x100a,
+            MessageType::ColorMenuReq => 0x100d,
+            MessageType::TimeMenuReq => 0x1010,
+            MessageType::BitRateMenuReq => 0x1011,
+            MessageType::HistoryMenuReq => 0x1012,
+            MessageType::FilenameMenuReq => 0x1013,
+            MessageType::KeyMenuReq => 0x1014,
+
+            // Filtered menu requests (single filter)
+            MessageType::ArtistMenuForGenreReq => 0x1101,
+            MessageType::AlbumMenuForArtistReq => 0x1102,
+            MessageType::TrackMenuForAlbumReq => 0x1103,
+            MessageType::PlaylistReq => 0x1105,
+            MessageType::BpmRangeReq => 0x1106,
+            MessageType::TrackMenuForRatingReq => 0x1107,
+            MessageType::YearMenuForDecadeReq => 0x1108,
+            MessageType::ArtistMenuForLabelReq => 0x110a,
+            MessageType::TrackMenuForColorReq => 0x110d,
+            MessageType::TrackMenuForTimeReq => 0x1110,
+            MessageType::TrackMenuForBitRateReq => 0x1111,
+            MessageType::TrackMenuForHistoryReq => 0x1112,
+            MessageType::NeighborMenuForKeyReq => 0x1114,
+
+            // Filtered menu requests (two filters)
+            MessageType::AlbumMenuForGenreAndArtistReq => 0x1201,
+            MessageType::TrackMenuForArtistAndAlbumReq => 0x1202,
+            MessageType::TrackMenuForBpmAndDistanceReq => 0x1206,
+            MessageType::TrackMenuForDecadeAndYearReq => 0x1208,
+            MessageType::AlbumMenuForLabelAndArtistReq => 0x120a,
+            MessageType::TrackMenuForKeyAndDistanceReq => 0x1214,
+
+            // Search and multi-filter
+            MessageType::SearchMenuReq => 0x1300,
+            MessageType::TrackMenuForGenreArtistAndAlbumReq => 0x1301,
+            MessageType::OriginalArtistMenuReq => 0x1302,
+            MessageType::TrackMenuForLabelArtistAndAlbumReq => 0x130a,
+
+            // Original artist / remixer chain
+            MessageType::AlbumMenuForOriginalArtistReq => 0x1402,
+            MessageType::TrackMenuForOriginalArtistAndAlbumReq => 0x1502,
+            MessageType::RemixerMenuReq => 0x1602,
+            MessageType::AlbumMenuForRemixerReq => 0x1702,
+            MessageType::TrackMenuForRemixerAndAlbumReq => 0x1802,
+
+            // Data requests
             MessageType::MetadataReq => 0x2002,
             MessageType::AlbumArtReq => 0x2003,
             MessageType::WaveformPreviewReq => 0x2004,
-            MessageType::WaveformDetailReq => 0x2904,
+            MessageType::FolderMenuReq => 0x2006,
             MessageType::CueListReq => 0x2104,
-            MessageType::CueListExtReq => 0x2b04,
+            MessageType::UnanalyzedMetadataReq => 0x2202,
             MessageType::BeatGridReq => 0x2204,
+            MessageType::WaveformDetailReq => 0x2904,
+            MessageType::CueListExtReq => 0x2b04,
             MessageType::AnlzTagReq => 0x2c04,
             MessageType::RenderMenuReq => 0x3000,
+
+            // Responses
+            MessageType::MenuAvailable => 0x4000,
+            MessageType::MenuHeader => 0x4001,
             MessageType::AlbumArtResponse => 0x4002,
+            MessageType::Unavailable => 0x4003,
+            MessageType::MenuItem => 0x4101,
+            MessageType::MenuFooter => 0x4201,
             MessageType::WaveformPreviewResponse => 0x4402,
             MessageType::BeatGridResponse => 0x4602,
             MessageType::CueListResponse => 0x4702,
             MessageType::WaveformDetailResponse => 0x4a02,
             MessageType::CueListExtResponse => 0x4e02,
             MessageType::AnlzTagResponse => 0x4f02,
-            MessageType::Unavailable => 0x4003,
+
             MessageType::Unknown(v) => v,
         }
     }
@@ -110,6 +299,7 @@ pub enum MenuIdentifier {
 /// Menu item types that identify what kind of data a menu item represents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuItemType {
+    // Basic metadata types
     Folder,
     AlbumTitle,
     Disc,
@@ -124,6 +314,8 @@ pub enum MenuItemType {
     Key,
     BitRate,
     Year,
+
+    // Color variants
     ColorNone,
     ColorPink,
     ColorRed,
@@ -133,24 +325,64 @@ pub enum MenuItemType {
     ColorAqua,
     ColorBlue,
     ColorPurple,
+
+    // Additional metadata
     Comment,
     HistoryPlaylist,
     OriginalArtist,
     Remixer,
     DateAdded,
+
+    // Root menu items
+    GenreMenu,
+    ArtistMenu,
+    AlbumMenu,
+    TrackMenu,
+    PlaylistMenu,
+    BpmMenu,
+    RatingMenu,
+    YearMenu,
+    RemixerMenu,
+    LabelMenu,
+    OriginalArtistMenu,
+    KeyMenu,
+    DateAddedMenu,
+    ColorMenu,
+    FolderMenu,
+    SearchMenu,
+    TimeMenu,
+    BitRateMenu,
+    FilenameMenu,
+    HistoryMenu,
+    HotCueBankMenu,
+
+    // Special
+    All,
+
+    // Composite TrackTitle variants
     TrackTitleAndAlbum,
     TrackTitleAndGenre,
     TrackTitleAndArtist,
     TrackTitleAndRating,
     TrackTitleAndDuration,
+    TrackTitleAndBpm,
+    TrackTitleAndLabel,
+    TrackTitleAndKey,
+    TrackTitleAndBitRate,
+    TrackTitleAndColor,
     TrackTitleAndComment,
+    TrackTitleAndOriginalArtist,
+    TrackTitleAndRemixer,
+    TrackTitleAndDjPlayCount,
     TrackTitleAndDateAdded,
+
     Unknown(u16),
 }
 
 impl From<u16> for MenuItemType {
     fn from(value: u16) -> Self {
         match value {
+            // Basic metadata types
             0x0001 => MenuItemType::Folder,
             0x0002 => MenuItemType::AlbumTitle,
             0x0003 => MenuItemType::Disc,
@@ -165,6 +397,8 @@ impl From<u16> for MenuItemType {
             0x000f => MenuItemType::Key,
             0x0010 => MenuItemType::BitRate,
             0x0011 => MenuItemType::Year,
+
+            // Color variants
             0x0013 => MenuItemType::ColorNone,
             0x0014 => MenuItemType::ColorPink,
             0x0015 => MenuItemType::ColorRed,
@@ -174,18 +408,57 @@ impl From<u16> for MenuItemType {
             0x0019 => MenuItemType::ColorAqua,
             0x001a => MenuItemType::ColorBlue,
             0x001b => MenuItemType::ColorPurple,
+
+            // Additional metadata
             0x0023 => MenuItemType::Comment,
             0x0024 => MenuItemType::HistoryPlaylist,
             0x0028 => MenuItemType::OriginalArtist,
             0x0029 => MenuItemType::Remixer,
             0x002e => MenuItemType::DateAdded,
+
+            // Root menu items
+            0x0080 => MenuItemType::GenreMenu,
+            0x0081 => MenuItemType::ArtistMenu,
+            0x0082 => MenuItemType::AlbumMenu,
+            0x0083 => MenuItemType::TrackMenu,
+            0x0084 => MenuItemType::PlaylistMenu,
+            0x0085 => MenuItemType::BpmMenu,
+            0x0086 => MenuItemType::RatingMenu,
+            0x0087 => MenuItemType::YearMenu,
+            0x0088 => MenuItemType::RemixerMenu,
+            0x0089 => MenuItemType::LabelMenu,
+            0x008a => MenuItemType::OriginalArtistMenu,
+            0x008b => MenuItemType::KeyMenu,
+            0x008c => MenuItemType::DateAddedMenu,
+            0x008e => MenuItemType::ColorMenu,
+            0x0090 => MenuItemType::FolderMenu,
+            0x0091 => MenuItemType::SearchMenu,
+            0x0092 => MenuItemType::TimeMenu,
+            0x0093 => MenuItemType::BitRateMenu,
+            0x0094 => MenuItemType::FilenameMenu,
+            0x0095 => MenuItemType::HistoryMenu,
+            0x0098 => MenuItemType::HotCueBankMenu,
+
+            // Special
+            0x00a0 => MenuItemType::All,
+
+            // Composite TrackTitle variants
             0x0204 => MenuItemType::TrackTitleAndAlbum,
             0x0604 => MenuItemType::TrackTitleAndGenre,
             0x0704 => MenuItemType::TrackTitleAndArtist,
             0x0a04 => MenuItemType::TrackTitleAndRating,
             0x0b04 => MenuItemType::TrackTitleAndDuration,
+            0x0d04 => MenuItemType::TrackTitleAndBpm,
+            0x0e04 => MenuItemType::TrackTitleAndLabel,
+            0x0f04 => MenuItemType::TrackTitleAndKey,
+            0x1004 => MenuItemType::TrackTitleAndBitRate,
+            0x1a04 => MenuItemType::TrackTitleAndColor,
             0x2304 => MenuItemType::TrackTitleAndComment,
+            0x2804 => MenuItemType::TrackTitleAndOriginalArtist,
+            0x2904 => MenuItemType::TrackTitleAndRemixer,
+            0x2a04 => MenuItemType::TrackTitleAndDjPlayCount,
             0x2e04 => MenuItemType::TrackTitleAndDateAdded,
+
             other => MenuItemType::Unknown(other),
         }
     }
@@ -194,6 +467,7 @@ impl From<u16> for MenuItemType {
 impl From<MenuItemType> for u16 {
     fn from(mt: MenuItemType) -> u16 {
         match mt {
+            // Basic metadata types
             MenuItemType::Folder => 0x0001,
             MenuItemType::AlbumTitle => 0x0002,
             MenuItemType::Disc => 0x0003,
@@ -208,6 +482,8 @@ impl From<MenuItemType> for u16 {
             MenuItemType::Key => 0x000f,
             MenuItemType::BitRate => 0x0010,
             MenuItemType::Year => 0x0011,
+
+            // Color variants
             MenuItemType::ColorNone => 0x0013,
             MenuItemType::ColorPink => 0x0014,
             MenuItemType::ColorRed => 0x0015,
@@ -217,18 +493,57 @@ impl From<MenuItemType> for u16 {
             MenuItemType::ColorAqua => 0x0019,
             MenuItemType::ColorBlue => 0x001a,
             MenuItemType::ColorPurple => 0x001b,
+
+            // Additional metadata
             MenuItemType::Comment => 0x0023,
             MenuItemType::HistoryPlaylist => 0x0024,
             MenuItemType::OriginalArtist => 0x0028,
             MenuItemType::Remixer => 0x0029,
             MenuItemType::DateAdded => 0x002e,
+
+            // Root menu items
+            MenuItemType::GenreMenu => 0x0080,
+            MenuItemType::ArtistMenu => 0x0081,
+            MenuItemType::AlbumMenu => 0x0082,
+            MenuItemType::TrackMenu => 0x0083,
+            MenuItemType::PlaylistMenu => 0x0084,
+            MenuItemType::BpmMenu => 0x0085,
+            MenuItemType::RatingMenu => 0x0086,
+            MenuItemType::YearMenu => 0x0087,
+            MenuItemType::RemixerMenu => 0x0088,
+            MenuItemType::LabelMenu => 0x0089,
+            MenuItemType::OriginalArtistMenu => 0x008a,
+            MenuItemType::KeyMenu => 0x008b,
+            MenuItemType::DateAddedMenu => 0x008c,
+            MenuItemType::ColorMenu => 0x008e,
+            MenuItemType::FolderMenu => 0x0090,
+            MenuItemType::SearchMenu => 0x0091,
+            MenuItemType::TimeMenu => 0x0092,
+            MenuItemType::BitRateMenu => 0x0093,
+            MenuItemType::FilenameMenu => 0x0094,
+            MenuItemType::HistoryMenu => 0x0095,
+            MenuItemType::HotCueBankMenu => 0x0098,
+
+            // Special
+            MenuItemType::All => 0x00a0,
+
+            // Composite TrackTitle variants
             MenuItemType::TrackTitleAndAlbum => 0x0204,
             MenuItemType::TrackTitleAndGenre => 0x0604,
             MenuItemType::TrackTitleAndArtist => 0x0704,
             MenuItemType::TrackTitleAndRating => 0x0a04,
             MenuItemType::TrackTitleAndDuration => 0x0b04,
+            MenuItemType::TrackTitleAndBpm => 0x0d04,
+            MenuItemType::TrackTitleAndLabel => 0x0e04,
+            MenuItemType::TrackTitleAndKey => 0x0f04,
+            MenuItemType::TrackTitleAndBitRate => 0x1004,
+            MenuItemType::TrackTitleAndColor => 0x1a04,
             MenuItemType::TrackTitleAndComment => 0x2304,
+            MenuItemType::TrackTitleAndOriginalArtist => 0x2804,
+            MenuItemType::TrackTitleAndRemixer => 0x2904,
+            MenuItemType::TrackTitleAndDjPlayCount => 0x2a04,
             MenuItemType::TrackTitleAndDateAdded => 0x2e04,
+
             MenuItemType::Unknown(v) => v,
         }
     }
@@ -475,39 +790,181 @@ mod tests {
     #[test]
     fn message_type_round_trip() {
         let known_types: &[(u16, MessageType)] = &[
+            // Lifecycle
             (0x0000, MessageType::SetupReq),
-            (0x4000, MessageType::MenuAvailable),
-            (0x4001, MessageType::MenuHeader),
-            (0x4101, MessageType::MenuItem),
-            (0x4201, MessageType::MenuFooter),
+            (0x0001, MessageType::InvalidData),
+            (0x0100, MessageType::TeardownReq),
+            // Root menu requests
+            (0x1000, MessageType::RootMenuReq),
+            (0x1001, MessageType::GenreMenuReq),
+            (0x1002, MessageType::ArtistMenuReq),
+            (0x1003, MessageType::AlbumMenuReq),
+            (0x1004, MessageType::TrackMenuReq),
+            (0x1006, MessageType::BpmMenuReq),
+            (0x1007, MessageType::RatingMenuReq),
+            (0x1008, MessageType::YearMenuReq),
+            (0x100a, MessageType::LabelMenuReq),
+            (0x100d, MessageType::ColorMenuReq),
+            (0x1010, MessageType::TimeMenuReq),
+            (0x1011, MessageType::BitRateMenuReq),
+            (0x1012, MessageType::HistoryMenuReq),
+            (0x1013, MessageType::FilenameMenuReq),
+            (0x1014, MessageType::KeyMenuReq),
+            // Filtered menu requests (single filter)
+            (0x1101, MessageType::ArtistMenuForGenreReq),
+            (0x1102, MessageType::AlbumMenuForArtistReq),
+            (0x1103, MessageType::TrackMenuForAlbumReq),
+            (0x1105, MessageType::PlaylistReq),
+            (0x1106, MessageType::BpmRangeReq),
+            (0x1107, MessageType::TrackMenuForRatingReq),
+            (0x1108, MessageType::YearMenuForDecadeReq),
+            (0x110a, MessageType::ArtistMenuForLabelReq),
+            (0x110d, MessageType::TrackMenuForColorReq),
+            (0x1110, MessageType::TrackMenuForTimeReq),
+            (0x1111, MessageType::TrackMenuForBitRateReq),
+            (0x1112, MessageType::TrackMenuForHistoryReq),
+            (0x1114, MessageType::NeighborMenuForKeyReq),
+            // Filtered menu requests (two filters)
+            (0x1201, MessageType::AlbumMenuForGenreAndArtistReq),
+            (0x1202, MessageType::TrackMenuForArtistAndAlbumReq),
+            (0x1206, MessageType::TrackMenuForBpmAndDistanceReq),
+            (0x1208, MessageType::TrackMenuForDecadeAndYearReq),
+            (0x120a, MessageType::AlbumMenuForLabelAndArtistReq),
+            (0x1214, MessageType::TrackMenuForKeyAndDistanceReq),
+            // Search and multi-filter
+            (0x1300, MessageType::SearchMenuReq),
+            (0x1301, MessageType::TrackMenuForGenreArtistAndAlbumReq),
+            (0x1302, MessageType::OriginalArtistMenuReq),
+            (0x130a, MessageType::TrackMenuForLabelArtistAndAlbumReq),
+            // Original artist / remixer chain
+            (0x1402, MessageType::AlbumMenuForOriginalArtistReq),
+            (0x1502, MessageType::TrackMenuForOriginalArtistAndAlbumReq),
+            (0x1602, MessageType::RemixerMenuReq),
+            (0x1702, MessageType::AlbumMenuForRemixerReq),
+            (0x1802, MessageType::TrackMenuForRemixerAndAlbumReq),
+            // Data requests
             (0x2002, MessageType::MetadataReq),
             (0x2003, MessageType::AlbumArtReq),
             (0x2004, MessageType::WaveformPreviewReq),
-            (0x2904, MessageType::WaveformDetailReq),
+            (0x2006, MessageType::FolderMenuReq),
             (0x2104, MessageType::CueListReq),
-            (0x2b04, MessageType::CueListExtReq),
+            (0x2202, MessageType::UnanalyzedMetadataReq),
             (0x2204, MessageType::BeatGridReq),
+            (0x2904, MessageType::WaveformDetailReq),
+            (0x2b04, MessageType::CueListExtReq),
             (0x2c04, MessageType::AnlzTagReq),
             (0x3000, MessageType::RenderMenuReq),
+            // Responses
+            (0x4000, MessageType::MenuAvailable),
+            (0x4001, MessageType::MenuHeader),
             (0x4002, MessageType::AlbumArtResponse),
+            (0x4003, MessageType::Unavailable),
+            (0x4101, MessageType::MenuItem),
+            (0x4201, MessageType::MenuFooter),
             (0x4402, MessageType::WaveformPreviewResponse),
             (0x4602, MessageType::BeatGridResponse),
             (0x4702, MessageType::CueListResponse),
             (0x4a02, MessageType::WaveformDetailResponse),
             (0x4e02, MessageType::CueListExtResponse),
             (0x4f02, MessageType::AnlzTagResponse),
-            (0x4003, MessageType::Unavailable),
         ];
         for &(raw, expected) in known_types {
             let mt = MessageType::from(raw);
-            assert_eq!(mt, expected);
-            assert_eq!(u16::from(mt), raw);
+            assert_eq!(mt, expected, "MessageType::from(0x{raw:04x})");
+            assert_eq!(u16::from(mt), raw, "u16::from({expected:?})");
         }
 
         // Unknown variant round-trips
         let unknown = MessageType::from(0xBEEF);
         assert_eq!(unknown, MessageType::Unknown(0xBEEF));
         assert_eq!(u16::from(unknown), 0xBEEF);
+    }
+
+    #[test]
+    fn menu_item_type_round_trip() {
+        let known_types: &[(u16, MenuItemType)] = &[
+            // Basic metadata types
+            (0x0001, MenuItemType::Folder),
+            (0x0002, MenuItemType::AlbumTitle),
+            (0x0003, MenuItemType::Disc),
+            (0x0004, MenuItemType::TrackTitle),
+            (0x0006, MenuItemType::Genre),
+            (0x0007, MenuItemType::Artist),
+            (0x0008, MenuItemType::Playlist),
+            (0x000a, MenuItemType::Rating),
+            (0x000b, MenuItemType::Duration),
+            (0x000d, MenuItemType::Tempo),
+            (0x000e, MenuItemType::Label),
+            (0x000f, MenuItemType::Key),
+            (0x0010, MenuItemType::BitRate),
+            (0x0011, MenuItemType::Year),
+            // Color variants
+            (0x0013, MenuItemType::ColorNone),
+            (0x0014, MenuItemType::ColorPink),
+            (0x0015, MenuItemType::ColorRed),
+            (0x0016, MenuItemType::ColorOrange),
+            (0x0017, MenuItemType::ColorYellow),
+            (0x0018, MenuItemType::ColorGreen),
+            (0x0019, MenuItemType::ColorAqua),
+            (0x001a, MenuItemType::ColorBlue),
+            (0x001b, MenuItemType::ColorPurple),
+            // Additional metadata
+            (0x0023, MenuItemType::Comment),
+            (0x0024, MenuItemType::HistoryPlaylist),
+            (0x0028, MenuItemType::OriginalArtist),
+            (0x0029, MenuItemType::Remixer),
+            (0x002e, MenuItemType::DateAdded),
+            // Root menu items
+            (0x0080, MenuItemType::GenreMenu),
+            (0x0081, MenuItemType::ArtistMenu),
+            (0x0082, MenuItemType::AlbumMenu),
+            (0x0083, MenuItemType::TrackMenu),
+            (0x0084, MenuItemType::PlaylistMenu),
+            (0x0085, MenuItemType::BpmMenu),
+            (0x0086, MenuItemType::RatingMenu),
+            (0x0087, MenuItemType::YearMenu),
+            (0x0088, MenuItemType::RemixerMenu),
+            (0x0089, MenuItemType::LabelMenu),
+            (0x008a, MenuItemType::OriginalArtistMenu),
+            (0x008b, MenuItemType::KeyMenu),
+            (0x008c, MenuItemType::DateAddedMenu),
+            (0x008e, MenuItemType::ColorMenu),
+            (0x0090, MenuItemType::FolderMenu),
+            (0x0091, MenuItemType::SearchMenu),
+            (0x0092, MenuItemType::TimeMenu),
+            (0x0093, MenuItemType::BitRateMenu),
+            (0x0094, MenuItemType::FilenameMenu),
+            (0x0095, MenuItemType::HistoryMenu),
+            (0x0098, MenuItemType::HotCueBankMenu),
+            // Special
+            (0x00a0, MenuItemType::All),
+            // Composite TrackTitle variants
+            (0x0204, MenuItemType::TrackTitleAndAlbum),
+            (0x0604, MenuItemType::TrackTitleAndGenre),
+            (0x0704, MenuItemType::TrackTitleAndArtist),
+            (0x0a04, MenuItemType::TrackTitleAndRating),
+            (0x0b04, MenuItemType::TrackTitleAndDuration),
+            (0x0d04, MenuItemType::TrackTitleAndBpm),
+            (0x0e04, MenuItemType::TrackTitleAndLabel),
+            (0x0f04, MenuItemType::TrackTitleAndKey),
+            (0x1004, MenuItemType::TrackTitleAndBitRate),
+            (0x1a04, MenuItemType::TrackTitleAndColor),
+            (0x2304, MenuItemType::TrackTitleAndComment),
+            (0x2804, MenuItemType::TrackTitleAndOriginalArtist),
+            (0x2904, MenuItemType::TrackTitleAndRemixer),
+            (0x2a04, MenuItemType::TrackTitleAndDjPlayCount),
+            (0x2e04, MenuItemType::TrackTitleAndDateAdded),
+        ];
+        for &(raw, expected) in known_types {
+            let mt = MenuItemType::from(raw);
+            assert_eq!(mt, expected, "MenuItemType::from(0x{raw:04x})");
+            assert_eq!(u16::from(mt), raw, "u16::from({expected:?})");
+        }
+
+        // Unknown variant round-trips
+        let unknown = MenuItemType::from(0xFFFF);
+        assert_eq!(unknown, MenuItemType::Unknown(0xFFFF));
+        assert_eq!(u16::from(unknown), 0xFFFF);
     }
 
     #[test]
