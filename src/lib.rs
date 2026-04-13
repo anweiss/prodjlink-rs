@@ -57,7 +57,7 @@ pub use data::fetch::{
     fetch_artwork, fetch_beatgrid, fetch_cue_list, fetch_metadata, fetch_waveform_detail,
     fetch_waveform_preview,
 };
-pub use data::menu::{MenuItem, MenuLoader};
+pub use data::menu::{MenuItem, MenuLoader, SortOrder};
 pub use data::metadata::{DataReference, SearchableItem, TrackMetadata};
 pub use data::network_provider::NetworkProvider;
 pub use data::provider::MetadataProvider;
