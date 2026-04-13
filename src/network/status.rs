@@ -139,6 +139,8 @@ mod tests {
             local_usb_state: 0,
             local_sd_state: 0,
             link_media_available: false,
+            local_disc_state: 0,
+            disc_track_count: 0,
             timestamp: Instant::now(),
         })
     }

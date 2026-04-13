@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
 
+use crate::device::settings::PlayerSettings;
 use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType};
 use crate::error::{ProDjLinkError, Result};
 use crate::network::finder::{DeviceFinder, FinderEvent};
@@ -16,11 +18,16 @@ use crate::protocol::announce::{
     build_claim_stage1, build_claim_stage2, build_claim_stage3, build_defense, build_device_hello,
     build_keep_alive,
 };
+use crate::protocol::beat::{build_beat, build_on_air};
 use crate::protocol::command::{self, FaderAction};
 use crate::protocol::header::{BEAT_PORT, DISCOVERY_PORT, MAGIC_HEADER, STATUS_PORT};
+use crate::protocol::status::{build_cdj_status, CdjStatusBuilder, CdjStatusFlags};
 
 /// Interval between keep-alive packets.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_millis(1500);
+
+/// Interval between status broadcast packets.
+const STATUS_BROADCAST_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Fader-start command type byte on port 50002.
 const FADER_START_TYPE: u8 = 0x02;
@@ -90,6 +97,8 @@ pub struct VirtualCdj {
     discovery_socket: Arc<UdpSocket>,
     /// Socket for sending commands (port 50002).
     status_socket: Arc<UdpSocket>,
+    /// Socket for sending beat packets (port 50001).
+    beat_socket: Arc<UdpSocket>,
     /// The MAC address we're using.
     #[allow(dead_code)]
     mac_address: [u8; 6],
@@ -103,6 +112,16 @@ pub struct VirtualCdj {
     command_tx: broadcast::Sender<CommandEvent>,
     /// Tempo master tracker.
     tempo_master: TempoMaster,
+    /// Whether this virtual player is "playing".
+    playing: AtomicBool,
+    /// Current playback position in milliseconds.
+    playback_position: AtomicU64,
+    /// Whether we are broadcasting status packets.
+    sending_status: AtomicBool,
+    /// Handle for the status-broadcast background task.
+    status_task: Mutex<Option<JoinHandle<()>>>,
+    /// Monotonic packet counter for status packets.
+    packet_counter: AtomicU64,
 }
 
 impl VirtualCdj {
@@ -131,6 +150,10 @@ impl VirtualCdj {
         let status_socket = UdpSocket::bind(("0.0.0.0", 0)).await?;
         status_socket.set_broadcast(true)?;
         let status_socket = Arc::new(status_socket);
+
+        let beat_socket = UdpSocket::bind(("0.0.0.0", 0)).await?;
+        beat_socket.set_broadcast(true)?;
+        let beat_socket = Arc::new(beat_socket);
 
         let (command_tx, _) = broadcast::channel(256);
         let command_task = spawn_command_listener(command_tx.clone());
@@ -161,12 +184,18 @@ impl VirtualCdj {
             config,
             discovery_socket,
             status_socket,
+            beat_socket,
             mac_address,
             keepalive_task: Some(keepalive_task),
             defense_task: None,
             command_task,
             command_tx,
             tempo_master,
+            playing: AtomicBool::new(false),
+            playback_position: AtomicU64::new(0),
+            sending_status: AtomicBool::new(false),
+            status_task: Mutex::new(None),
+            packet_counter: AtomicU64::new(0),
         })
     }
 
@@ -311,6 +340,152 @@ impl VirtualCdj {
         }
     }
 
+    // -------------------------------------------------------------------
+    // On-air / Beat / Status broadcasting
+    // -------------------------------------------------------------------
+
+    /// Broadcast an on-air packet indicating which channels are currently
+    /// on-air. `channels[0]` is channel 1, etc.
+    pub async fn send_on_air_command(&self, channels: &[bool; 4]) -> Result<()> {
+        let packet = build_on_air(
+            &self.config.name,
+            self.config.device_number,
+            channels,
+        );
+        self.send_beat_command(&packet).await
+    }
+
+    /// Broadcast a beat packet with the given BPM and beat-within-bar (1–4).
+    pub async fn send_beat(&self, bpm: Bpm, beat_within_bar: u8) -> Result<()> {
+        // 0x100000 is the "normal speed" pitch (no adjustment).
+        let pitch: u32 = 0x100000;
+        let packet = build_beat(
+            &self.config.name,
+            self.config.device_number,
+            bpm,
+            pitch,
+            beat_within_bar,
+        );
+        self.send_beat_command(&packet).await
+    }
+
+    /// Start or stop the background status-broadcast loop.
+    ///
+    /// When `sending` is `true` a background task sends a CDJ-style status
+    /// packet to the status port every 200 ms. Calling with `false` signals
+    /// the task to exit and awaits its join handle.
+    pub async fn set_sending_status(&self, sending: bool) {
+        let was_sending = self.sending_status.swap(sending, Ordering::SeqCst);
+
+        if sending && !was_sending {
+            // Spawn the broadcast task.
+            let playing = &self.playing as *const AtomicBool;
+            let sending_flag = &self.sending_status as *const AtomicBool;
+            let counter = &self.packet_counter as *const AtomicU64;
+            let config = self.config.clone();
+            let socket = self.status_socket.clone();
+
+            // SAFETY: The raw pointers point to fields of `self` (an Arc'd
+            // struct). `stop()` aborts the task before the struct is dropped.
+            struct SendPtr<T>(*const T);
+            unsafe impl<T> Send for SendPtr<T> {}
+
+            let playing = SendPtr(playing);
+            let sending_flag = SendPtr(sending_flag);
+            let counter = SendPtr(counter);
+
+            let handle = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(STATUS_BROADCAST_INTERVAL);
+                let broadcast_addr =
+                    SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
+
+                loop {
+                    interval.tick().await;
+
+                    let is_sending = unsafe { &*sending_flag.0 };
+                    if !is_sending.load(Ordering::Relaxed) {
+                        break;
+                    }
+
+                    let is_playing = unsafe { &*playing.0 };
+                    let cnt = unsafe { &*counter.0 };
+                    let seq = cnt.fetch_add(1, Ordering::Relaxed);
+
+                    let flags = CdjStatusFlags {
+                        playing: is_playing.load(Ordering::Relaxed),
+                        master: false,
+                        synced: false,
+                        on_air: true,
+                        bpm_sync: false,
+                    };
+                    let builder = CdjStatusBuilder {
+                        device_name: config.name.clone(),
+                        device_number: config.device_number,
+                        flags,
+                        packet_number: seq as u32,
+                        ..CdjStatusBuilder::default()
+                    };
+                    let packet = build_cdj_status(&builder);
+                    let _ = socket.send_to(&packet, broadcast_addr).await;
+                }
+            });
+
+            let mut task = self.status_task.lock().await;
+            *task = Some(handle);
+        } else if !sending && was_sending {
+            let mut task = self.status_task.lock().await;
+            if let Some(h) = task.take() {
+                h.abort();
+            }
+        }
+    }
+
+    /// Whether the background status-broadcast loop is active.
+    pub fn is_sending_status(&self) -> bool {
+        self.sending_status.load(Ordering::Relaxed)
+    }
+
+    // -------------------------------------------------------------------
+    // Playback state helpers
+    // -------------------------------------------------------------------
+
+    /// Set our virtual playing state (affects status packets we broadcast).
+    pub fn set_playing(&self, playing: bool) {
+        self.playing.store(playing, Ordering::Relaxed);
+    }
+
+    /// Whether our virtual player is currently "playing".
+    pub fn is_playing(&self) -> bool {
+        self.playing.load(Ordering::Relaxed)
+    }
+
+    /// Current playback position in milliseconds.
+    pub fn playback_position(&self) -> u64 {
+        self.playback_position.load(Ordering::Relaxed)
+    }
+
+    /// Update the current playback position (ms).
+    pub fn adjust_playback_position(&self, position: u64) {
+        self.playback_position.store(position, Ordering::Relaxed);
+    }
+
+    // -------------------------------------------------------------------
+    // Settings
+    // -------------------------------------------------------------------
+
+    /// Send a load-settings command to a specific target device.
+    pub async fn send_load_settings_command(
+        &self,
+        target: DeviceNumber,
+        settings: &PlayerSettings,
+    ) -> Result<()> {
+        let packet = settings.build_settings_packet(
+            self.config.device_number.0,
+            target.0,
+        );
+        self.send_command(&packet).await
+    }
+
     /// Send a command packet via broadcast on the status port (50002).
     ///
     /// Used for fader start (0x02) and load track (0x19) commands.
@@ -325,12 +500,15 @@ impl VirtualCdj {
     /// Used for sync control (0x2a) and master handoff (0x26) commands.
     async fn send_beat_command(&self, packet: &[u8]) -> Result<()> {
         let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), BEAT_PORT);
-        self.status_socket.send_to(packet, broadcast_addr).await?;
+        self.beat_socket.send_to(packet, broadcast_addr).await?;
         Ok(())
     }
 
     /// Stop the virtual CDJ and its keep-alive loop.
     pub fn stop(mut self) {
+        // Signal the status broadcast loop to exit.
+        self.sending_status.store(false, Ordering::SeqCst);
+
         if let Some(task) = self.keepalive_task.take() {
             task.abort();
         }
@@ -339,6 +517,12 @@ impl VirtualCdj {
         }
         if let Some(task) = self.command_task.take() {
             task.abort();
+        }
+        // Abort status task if running.
+        if let Ok(mut guard) = self.status_task.try_lock() {
+            if let Some(h) = guard.take() {
+                h.abort();
+            }
         }
     }
 
@@ -372,6 +556,10 @@ impl VirtualCdj {
         let status_socket = UdpSocket::bind(("0.0.0.0", 0)).await?;
         status_socket.set_broadcast(true)?;
         let status_socket = Arc::new(status_socket);
+
+        let beat_socket = UdpSocket::bind(("0.0.0.0", 0)).await?;
+        beat_socket.set_broadcast(true)?;
+        let beat_socket = Arc::new(beat_socket);
 
         let (command_tx, _) = broadcast::channel(256);
         let command_task = spawn_command_listener(command_tx.clone());
@@ -413,12 +601,18 @@ impl VirtualCdj {
             config,
             discovery_socket,
             status_socket,
+            beat_socket,
             mac_address,
             keepalive_task: Some(keepalive_task),
             defense_task: Some(defense_task),
             command_task,
             command_tx,
             tempo_master,
+            playing: AtomicBool::new(false),
+            playback_position: AtomicU64::new(0),
+            sending_status: AtomicBool::new(false),
+            status_task: Mutex::new(None),
+            packet_counter: AtomicU64::new(0),
         })
     }
 
@@ -940,6 +1134,8 @@ mod tests {
             local_usb_state: 4,
             local_sd_state: 0,
             link_media_available: false,
+            local_disc_state: 0,
+            disc_track_count: 0,
             timestamp: std::time::Instant::now(),
         };
 
@@ -992,6 +1188,8 @@ mod tests {
             local_usb_state: 4,
             local_sd_state: 0,
             link_media_available: false,
+            local_disc_state: 0,
+            disc_track_count: 0,
             timestamp: std::time::Instant::now(),
         };
 
@@ -1124,6 +1322,8 @@ mod tests {
             local_usb_state: 0,
             local_sd_state: 0,
             link_media_available: false,
+            local_disc_state: 0,
+            disc_track_count: 0,
             timestamp: std::time::Instant::now(),
         };
         vcdj.process_cdj_status(&status);

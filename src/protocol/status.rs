@@ -45,6 +45,8 @@ const LOCAL_SD_STATE_OFFSET: usize = 0x73;
 const LINK_MEDIA_AVAILABLE_OFFSET: usize = 0x75;
 const CUE_COUNTDOWN_OFFSET: usize = 0xa4;
 const PACKET_NUMBER_OFFSET: usize = 0xc8;
+const LOCAL_CD_STATE_OFFSET: usize = 0x37;
+const DISC_TRACK_COUNT_OFFSET: usize = 0x46;
 
 // CDJ-3000 loop field offsets
 const LOOP_START_OFFSET: usize = 0x1b6;
@@ -138,6 +140,10 @@ pub struct CdjStatus {
     pub local_sd_state: u8,
     /// Whether link media is available from another player.
     pub link_media_available: bool,
+    /// Raw disc (CD) slot state byte at 0x37.
+    pub local_disc_state: u8,
+    /// Number of tracks on the mounted disc (or loaded playlist/menu).
+    pub disc_track_count: u16,
     pub timestamp: Instant,
 }
 
@@ -236,6 +242,94 @@ impl CdjStatus {
         }
         true
     }
+
+    /// Playing with the jog wheel in vinyl mode.
+    pub fn is_playing_vinyl_mode(&self) -> bool {
+        self.play_state_3 == PlayState3::ForwardVinyl
+    }
+
+    /// Playing with the jog wheel in CDJ mode.
+    pub fn is_playing_cdj_mode(&self) -> bool {
+        self.play_state_3 == PlayState3::ForwardCdj
+    }
+
+    /// Actual tempo after pitch adjustment (BPM × pitch multiplier).
+    pub fn effective_tempo(&self) -> f64 {
+        self.bpm.0 * self.pitch.to_multiplier()
+    }
+
+    /// Format the cue countdown the way the CDJ display shows it.
+    ///
+    /// Returns `"--.-"` when no countdown is active, `"00.0"` when sitting
+    /// on the cue point, or `"BB.b"` (bars.beats) for values 1–256.
+    pub fn format_cue_countdown(&self) -> String {
+        match self.cue_countdown {
+            None => "--.-".to_string(),
+            Some(0) => "00.0".to_string(),
+            Some(count @ 1..=256) => {
+                let bars = (count - 1) / 4;
+                let beats = ((count - 1) % 4) + 1;
+                format!("{:02}.{}", bars, beats)
+            }
+            Some(_) => "??.?".to_string(),
+        }
+    }
+
+    /// Whether this packet is large enough to contain CDJ-3000 loop data.
+    pub fn can_report_looping(&self) -> bool {
+        self.packet_length >= CDJ_LOOP_THRESHOLD
+    }
+
+    /// Active loop length in beats, if the packet supports it and a loop is active.
+    pub fn active_loop_beats(&self) -> Option<u16> {
+        if self.can_report_looping() {
+            match self.loop_beats {
+                Some(b) if b != 0 => Some(b),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Whether the local USB slot is currently unloading.
+    pub fn is_local_usb_unloading(&self) -> bool {
+        self.local_usb_state == 2
+    }
+
+    /// Whether the local SD slot is currently unloading.
+    pub fn is_local_sd_unloading(&self) -> bool {
+        self.local_sd_state == 2
+    }
+
+    /// Whether the disc slot is empty (or the CD drive has powered off).
+    ///
+    /// Returns `true` unless the disc state indicates an actively mounted disc.
+    pub fn is_disc_slot_empty(&self) -> bool {
+        self.local_disc_state != 0x1e && self.local_disc_state != 0x11
+    }
+
+    /// Whether the CD drive has powered down due to prolonged disuse.
+    pub fn is_disc_slot_asleep(&self) -> bool {
+        self.local_disc_state == 1
+    }
+
+    /// Alias for `is_master` matching the Java `isTempoMaster()` name.
+    pub fn is_tempo_master(&self) -> bool {
+        self.is_master
+    }
+
+    /// Whether `beat_within_bar` has musical significance.
+    ///
+    /// True when a nexus-era player is playing an analysed rekordbox track.
+    pub fn is_beat_within_bar_meaningful(&self) -> bool {
+        self.beat_within_bar > 0 && self.beat_within_bar <= 4
+    }
+
+    /// The device number that master is being yielded to, if any.
+    pub fn master_yielding_to(&self) -> Option<DeviceNumber> {
+        self.master_hand_off.map(DeviceNumber::from)
+    }
 }
 
 /// Mixer status update (verified against MixerStatus.java).
@@ -256,6 +350,28 @@ pub struct MixerStatus {
     /// Device number that master is being yielded to, if any.
     pub master_hand_off: Option<u8>,
     pub timestamp: Instant,
+}
+
+impl MixerStatus {
+    /// Actual tempo after pitch adjustment (BPM × pitch multiplier).
+    pub fn effective_tempo(&self) -> f64 {
+        self.bpm.0 * self.pitch.to_multiplier()
+    }
+
+    /// Alias for `is_master` matching the Java `isTempoMaster()` name.
+    pub fn is_tempo_master(&self) -> bool {
+        self.is_master
+    }
+
+    /// Whether `beat_within_bar` has musical significance.
+    pub fn is_beat_within_bar_meaningful(&self) -> bool {
+        self.beat_within_bar > 0 && self.beat_within_bar <= 4
+    }
+
+    /// The device number that master is being yielded to, if any.
+    pub fn master_yielding_to(&self) -> Option<DeviceNumber> {
+        self.master_hand_off.map(DeviceNumber::from)
+    }
 }
 
 /// Unified device update enum.
@@ -351,6 +467,9 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
     let local_usb_state = data[LOCAL_USB_STATE_OFFSET];
     let local_sd_state = data[LOCAL_SD_STATE_OFFSET];
     let link_media_available = data[LINK_MEDIA_AVAILABLE_OFFSET] != 0;
+    let local_disc_state = data[LOCAL_CD_STATE_OFFSET];
+    let disc_track_count =
+        u16::from_be_bytes([data[DISC_TRACK_COUNT_OFFSET], data[DISC_TRACK_COUNT_OFFSET + 1]]);
 
     Ok(CdjStatus {
         name,
@@ -386,6 +505,8 @@ pub fn parse_cdj_status(data: &[u8]) -> Result<CdjStatus> {
         local_usb_state,
         local_sd_state,
         link_media_available,
+        local_disc_state,
+        disc_track_count,
         timestamp: Instant::now(),
     })
 }
@@ -1414,5 +1535,370 @@ mod tests {
         assert_eq!(back.synced, true);
         assert_eq!(back.on_air, false);
         assert_eq!(back.bpm_sync, true);
+    }
+
+    // -- New convenience method tests (CdjStatus) --
+
+    #[test]
+    fn cdj_is_playing_vinyl_mode() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_3_OFFSET] = 0x09; // ForwardVinyl
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_playing_vinyl_mode());
+        assert!(!s.is_playing_cdj_mode());
+    }
+
+    #[test]
+    fn cdj_is_playing_cdj_mode() {
+        let pkt = make_cdj_packet(); // default ForwardCdj (0x0d)
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_playing_cdj_mode());
+        assert!(!s.is_playing_vinyl_mode());
+    }
+
+    #[test]
+    fn cdj_playing_mode_neither_when_paused() {
+        let mut pkt = make_cdj_packet();
+        pkt[PLAY_STATE_3_OFFSET] = 0x01; // PausedOrReverse
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_playing_vinyl_mode());
+        assert!(!s.is_playing_cdj_mode());
+    }
+
+    #[test]
+    fn cdj_effective_tempo_normal_pitch() {
+        let pkt = make_cdj_packet(); // 128 BPM, pitch 0x100000 (1.0×)
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!((s.effective_tempo() - 128.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cdj_effective_tempo_with_pitch_change() {
+        let mut pkt = make_cdj_packet();
+        let pitch_raw = (0x100000 as f64 * 1.05) as u32;
+        let pitch_bytes = pitch_raw.to_be_bytes();
+        pkt[PITCH_OFFSET..PITCH_OFFSET + 3].copy_from_slice(&pitch_bytes[1..4]);
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!((s.effective_tempo() - 134.4).abs() < 0.1);
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_no_cue() {
+        let pkt = make_cdj_packet(); // sentinel → None
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "--.-");
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_on_cue() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x00;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x00;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "00.0");
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_one_beat() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x00;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x01;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "00.1");
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_256_beats() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x01;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x00;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "63.4");
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_five_beats() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x00;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x05;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "01.1");
+    }
+
+    #[test]
+    fn cdj_format_cue_countdown_out_of_range() {
+        let mut pkt = make_cdj_packet();
+        pkt[CUE_COUNTDOWN_OFFSET] = 0x01;
+        pkt[CUE_COUNTDOWN_OFFSET + 1] = 0x2C; // 300
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.format_cue_countdown(), "??.?");
+    }
+
+    #[test]
+    fn cdj_can_report_looping_standard() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.can_report_looping());
+    }
+
+    #[test]
+    fn cdj_can_report_looping_extended() {
+        let base = make_cdj_packet();
+        let mut pkt = vec![0u8; CDJ_LOOP_THRESHOLD];
+        pkt[..base.len()].copy_from_slice(&base);
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.can_report_looping());
+    }
+
+    #[test]
+    fn cdj_active_loop_beats_not_looping() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.active_loop_beats().is_none());
+    }
+
+    #[test]
+    fn cdj_active_loop_beats_zero() {
+        let base = make_cdj_packet();
+        let mut pkt = vec![0u8; CDJ_LOOP_THRESHOLD];
+        pkt[..base.len()].copy_from_slice(&base);
+        number_to_bytes(0, &mut pkt, LOOP_BEATS_OFFSET, 2);
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.active_loop_beats().is_none());
+    }
+
+    #[test]
+    fn cdj_active_loop_beats_nonzero() {
+        let base = make_cdj_packet();
+        let mut pkt = vec![0u8; CDJ_LOOP_THRESHOLD];
+        pkt[..base.len()].copy_from_slice(&base);
+        number_to_bytes(8, &mut pkt, LOOP_BEATS_OFFSET, 2);
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.active_loop_beats(), Some(8));
+    }
+
+    #[test]
+    fn cdj_is_local_usb_unloading() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_USB_STATE_OFFSET] = 2;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_usb_unloading());
+        assert!(!s.is_local_usb_loaded());
+        assert!(!s.is_local_usb_empty());
+    }
+
+    #[test]
+    fn cdj_is_local_usb_not_unloading() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_local_usb_unloading());
+    }
+
+    #[test]
+    fn cdj_is_local_sd_unloading() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_SD_STATE_OFFSET] = 2;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_local_sd_unloading());
+        assert!(!s.is_local_sd_loaded());
+        assert!(!s.is_local_sd_empty());
+    }
+
+    #[test]
+    fn cdj_is_local_sd_not_unloading() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_local_sd_unloading());
+    }
+
+    #[test]
+    fn cdj_disc_slot_empty_default() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_disc_slot_empty());
+    }
+
+    #[test]
+    fn cdj_disc_slot_not_empty_loaded_0x1e() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_CD_STATE_OFFSET] = 0x1e;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_disc_slot_empty());
+    }
+
+    #[test]
+    fn cdj_disc_slot_not_empty_0x11() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_CD_STATE_OFFSET] = 0x11;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_disc_slot_empty());
+    }
+
+    #[test]
+    fn cdj_disc_slot_asleep() {
+        let mut pkt = make_cdj_packet();
+        pkt[LOCAL_CD_STATE_OFFSET] = 1;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_disc_slot_asleep());
+        assert!(s.is_disc_slot_empty());
+    }
+
+    #[test]
+    fn cdj_disc_slot_not_asleep() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_disc_slot_asleep());
+    }
+
+    #[test]
+    fn cdj_disc_track_count() {
+        let mut pkt = make_cdj_packet();
+        pkt[DISC_TRACK_COUNT_OFFSET] = 0x00;
+        pkt[DISC_TRACK_COUNT_OFFSET + 1] = 0x0A;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.disc_track_count, 10);
+    }
+
+    #[test]
+    fn cdj_disc_track_count_default_zero() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.disc_track_count, 0);
+    }
+
+    #[test]
+    fn cdj_is_tempo_master_true() {
+        let mut pkt = make_cdj_packet();
+        pkt[FLAGS_OFFSET] = FLAG_MASTER;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_tempo_master());
+        assert!(s.is_master);
+    }
+
+    #[test]
+    fn cdj_is_tempo_master_false() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_tempo_master());
+    }
+
+    #[test]
+    fn cdj_beat_within_bar_meaningful() {
+        let pkt = make_cdj_packet(); // beat_within_bar = 2
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn cdj_beat_within_bar_not_meaningful_zero() {
+        let mut pkt = make_cdj_packet();
+        pkt[BEAT_WITHIN_BAR_OFFSET] = 0;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn cdj_beat_within_bar_not_meaningful_five() {
+        let mut pkt = make_cdj_packet();
+        pkt[BEAT_WITHIN_BAR_OFFSET] = 5;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn cdj_beat_within_bar_meaningful_boundary() {
+        for b in 1..=4u8 {
+            let mut pkt = make_cdj_packet();
+            pkt[BEAT_WITHIN_BAR_OFFSET] = b;
+            let s = parse_cdj_status(&pkt).unwrap();
+            assert!(s.is_beat_within_bar_meaningful(), "beat {b} should be meaningful");
+        }
+    }
+
+    #[test]
+    fn cdj_master_yielding_to_none() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.master_yielding_to().is_none());
+    }
+
+    #[test]
+    fn cdj_master_yielding_to_some() {
+        let mut pkt = make_cdj_packet();
+        pkt[MASTER_HAND_OFF_OFFSET] = 2;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.master_yielding_to(), Some(DeviceNumber(2)));
+    }
+
+    // -- New convenience method tests (MixerStatus) --
+
+    #[test]
+    fn mixer_effective_tempo_normal_pitch() {
+        let pkt = make_mixer_packet();
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!((s.effective_tempo() - 128.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn mixer_effective_tempo_with_pitch_change() {
+        let mut pkt = make_mixer_packet();
+        let pitch_raw = (0x100000 as f64 * 1.1) as u32;
+        let pitch_bytes = pitch_raw.to_be_bytes();
+        pkt[MIXER_PITCH_OFFSET..MIXER_PITCH_OFFSET + 4].copy_from_slice(&pitch_bytes);
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!((s.effective_tempo() - 140.8).abs() < 0.1);
+    }
+
+    #[test]
+    fn mixer_is_tempo_master_true() {
+        let pkt = make_mixer_packet();
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(s.is_tempo_master());
+    }
+
+    #[test]
+    fn mixer_is_tempo_master_false() {
+        let mut pkt = make_mixer_packet();
+        pkt[MIXER_FLAGS_OFFSET] = FLAG_SYNCED;
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(!s.is_tempo_master());
+    }
+
+    #[test]
+    fn mixer_beat_within_bar_meaningful() {
+        let pkt = make_mixer_packet(); // beat_within_bar = 3
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn mixer_beat_within_bar_not_meaningful_zero() {
+        let mut pkt = make_mixer_packet();
+        pkt[MIXER_BEAT_WITHIN_BAR_OFFSET] = 0;
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(!s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn mixer_beat_within_bar_not_meaningful_five() {
+        let mut pkt = make_mixer_packet();
+        pkt[MIXER_BEAT_WITHIN_BAR_OFFSET] = 5;
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(!s.is_beat_within_bar_meaningful());
+    }
+
+    #[test]
+    fn mixer_master_yielding_to_none() {
+        let pkt = make_mixer_packet();
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert!(s.master_yielding_to().is_none());
+    }
+
+    #[test]
+    fn mixer_master_yielding_to_some() {
+        let mut pkt = make_mixer_packet();
+        pkt[MIXER_MASTER_HAND_OFF_OFFSET] = 4;
+        let s = parse_mixer_status(&pkt).unwrap();
+        assert_eq!(s.master_yielding_to(), Some(DeviceNumber(4)));
     }
 }

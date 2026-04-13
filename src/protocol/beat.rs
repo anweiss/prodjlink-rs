@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::device::types::{Bpm, DeviceNumber, DeviceType, Pitch};
 use crate::error::{ProDjLinkError, Result};
-use crate::protocol::header::{parse_header, PacketType};
+use crate::protocol::header::{parse_header, PacketType, MAGIC_HEADER};
 use crate::util::{bytes_to_number, read_device_name};
 
 /// Beat packets are exactly 0x60 bytes.
@@ -208,6 +208,98 @@ pub fn parse_precise_position(data: &[u8]) -> Result<PrecisePosition> {
         effective_bpm,
         timestamp: Instant::now(),
     })
+}
+
+// ---------------------------------------------------------------------------
+// Beat / On-air packet builders
+// ---------------------------------------------------------------------------
+
+/// Build a 0x60-byte beat packet (type 0x28) for broadcast on port 50001.
+///
+/// `bpm` is the current tempo, `pitch` is the 3-byte pitch value
+/// (0x100000 = normal), and `beat_within_bar` is 1–4.
+pub fn build_beat(
+    name: &str,
+    device: DeviceNumber,
+    bpm: Bpm,
+    pitch: u32,
+    beat_within_bar: u8,
+) -> Vec<u8> {
+    let mut pkt = vec![0u8; BEAT_PACKET_LENGTH];
+
+    // Magic header
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    // Type byte
+    pkt[0x0a] = 0x28;
+    // Device name (20 bytes, null-padded)
+    let name_bytes = name.as_bytes();
+    let len = name_bytes.len().min(20);
+    pkt[0x0b..0x0b + len].copy_from_slice(&name_bytes[..len]);
+    // Padding byte + device number
+    pkt[0x1f] = 0x01;
+    pkt[0x21] = device.0;
+    // Payload length (2 bytes big-endian): 0x60 - 0x24 = 0x3c
+    pkt[0x22] = 0x00;
+    pkt[0x23] = 0x3c;
+
+    // Six timing fields (0x24–0x3b) — all set to sentinel 0xFFFFFFFF
+    for i in 0..6 {
+        let off = 0x24 + i * 4;
+        pkt[off] = 0xFF;
+        pkt[off + 1] = 0xFF;
+        pkt[off + 2] = 0xFF;
+        pkt[off + 3] = 0xFF;
+    }
+
+    // Pitch (3 bytes at 0x55–0x57, big-endian)
+    pkt[0x55] = ((pitch >> 16) & 0xFF) as u8;
+    pkt[0x56] = ((pitch >> 8) & 0xFF) as u8;
+    pkt[0x57] = (pitch & 0xFF) as u8;
+
+    // BPM in hundredths (2 bytes at 0x5a–0x5b, big-endian)
+    let bpm_hundredths = (bpm.0 * 100.0).round() as u16;
+    pkt[0x5a] = (bpm_hundredths >> 8) as u8;
+    pkt[0x5b] = (bpm_hundredths & 0xFF) as u8;
+
+    // Beat within bar at 0x5c
+    pkt[0x5c] = beat_within_bar;
+
+    pkt
+}
+
+/// Build a channels-on-air packet (type 0x03) for broadcast on port 50001.
+///
+/// `channels[0]` corresponds to channel 1, up to `channels[3]` for channel 4.
+/// Non-zero flag means "on-air".
+pub fn build_on_air(
+    name: &str,
+    device: DeviceNumber,
+    channels: &[bool; 4],
+) -> Vec<u8> {
+    let total = 0x24 + 4; // prefix + 4 channel bytes
+    let mut pkt = vec![0u8; total];
+
+    // Magic header
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    // Type byte
+    pkt[0x0a] = 0x03;
+    // Device name
+    let name_bytes = name.as_bytes();
+    let len = name_bytes.len().min(20);
+    pkt[0x0b..0x0b + len].copy_from_slice(&name_bytes[..len]);
+    // Padding byte + device number
+    pkt[0x1f] = 0x01;
+    pkt[0x21] = device.0;
+    // Payload length (4 bytes for 4 channels)
+    pkt[0x22] = 0x00;
+    pkt[0x23] = 0x04;
+
+    // Channel flags
+    for (i, &on) in channels.iter().enumerate() {
+        pkt[0x24 + i] = if on { 0x01 } else { 0x00 };
+    }
+
+    pkt
 }
 
 // ---------------------------------------------------------------------------
