@@ -42,9 +42,16 @@ pub use network::virtual_cdj::{CommandEvent, VirtualCdj, VirtualCdjConfig};
 // Data types
 pub use data::artwork::{AlbumArt, ArtworkReference, ImageFormat};
 pub use data::beatgrid::{BeatGrid, BeatGridEntry};
+pub use data::color::ColorItem;
 pub use data::cue::{CueColor, CueEntry, CueList, CueType};
+pub use data::fetch::{
+    fetch_artwork, fetch_beatgrid, fetch_cue_list, fetch_metadata, fetch_waveform_detail,
+    fetch_waveform_preview,
+};
 pub use data::menu::{MenuItem, MenuLoader};
 pub use data::metadata::{DataReference, SearchableItem, TrackMetadata};
+pub use data::network_provider::NetworkProvider;
+pub use data::provider::MetadataProvider;
 pub use data::waveform::{WaveformDetail, WaveformPreview, WaveformStyle};
 
 // DBServer
