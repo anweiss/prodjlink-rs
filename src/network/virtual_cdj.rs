@@ -113,15 +113,15 @@ pub struct VirtualCdj {
     /// Tempo master tracker.
     tempo_master: TempoMaster,
     /// Whether this virtual player is "playing".
-    playing: AtomicBool,
+    playing: Arc<AtomicBool>,
     /// Current playback position in milliseconds.
-    playback_position: AtomicU64,
+    playback_position: Arc<AtomicU64>,
     /// Whether we are broadcasting status packets.
-    sending_status: AtomicBool,
+    sending_status: Arc<AtomicBool>,
     /// Handle for the status-broadcast background task.
     status_task: Mutex<Option<JoinHandle<()>>>,
     /// Monotonic packet counter for status packets.
-    packet_counter: AtomicU64,
+    packet_counter: Arc<AtomicU64>,
 }
 
 impl VirtualCdj {
@@ -191,11 +191,11 @@ impl VirtualCdj {
             command_task,
             command_tx,
             tempo_master,
-            playing: AtomicBool::new(false),
-            playback_position: AtomicU64::new(0),
-            sending_status: AtomicBool::new(false),
+            playing: Arc::new(AtomicBool::new(false)),
+            playback_position: Arc::new(AtomicU64::new(0)),
+            sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
-            packet_counter: AtomicU64::new(0),
+            packet_counter: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -378,21 +378,11 @@ impl VirtualCdj {
         let was_sending = self.sending_status.swap(sending, Ordering::SeqCst);
 
         if sending && !was_sending {
-            // Spawn the broadcast task.
-            let playing = &self.playing as *const AtomicBool;
-            let sending_flag = &self.sending_status as *const AtomicBool;
-            let counter = &self.packet_counter as *const AtomicU64;
+            let playing = Arc::clone(&self.playing);
+            let sending_flag = Arc::clone(&self.sending_status);
+            let counter = Arc::clone(&self.packet_counter);
             let config = self.config.clone();
             let socket = self.status_socket.clone();
-
-            // SAFETY: The raw pointers point to fields of `self` (an Arc'd
-            // struct). `stop()` aborts the task before the struct is dropped.
-            struct SendPtr<T>(*const T);
-            unsafe impl<T> Send for SendPtr<T> {}
-
-            let playing = SendPtr(playing);
-            let sending_flag = SendPtr(sending_flag);
-            let counter = SendPtr(counter);
 
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(STATUS_BROADCAST_INTERVAL);
@@ -402,17 +392,14 @@ impl VirtualCdj {
                 loop {
                     interval.tick().await;
 
-                    let is_sending = unsafe { &*sending_flag.0 };
-                    if !is_sending.load(Ordering::Relaxed) {
+                    if !sending_flag.load(Ordering::Relaxed) {
                         break;
                     }
 
-                    let is_playing = unsafe { &*playing.0 };
-                    let cnt = unsafe { &*counter.0 };
-                    let seq = cnt.fetch_add(1, Ordering::Relaxed);
+                    let seq = counter.fetch_add(1, Ordering::Relaxed);
 
                     let flags = CdjStatusFlags {
-                        playing: is_playing.load(Ordering::Relaxed),
+                        playing: playing.load(Ordering::Relaxed),
                         master: false,
                         synced: false,
                         on_air: true,
@@ -608,11 +595,11 @@ impl VirtualCdj {
             command_task,
             command_tx,
             tempo_master,
-            playing: AtomicBool::new(false),
-            playback_position: AtomicU64::new(0),
-            sending_status: AtomicBool::new(false),
+            playing: Arc::new(AtomicBool::new(false)),
+            playback_position: Arc::new(AtomicU64::new(0)),
+            sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
-            packet_counter: AtomicU64::new(0),
+            packet_counter: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -1520,6 +1507,92 @@ mod tests {
         let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
         let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
         let _rx = vcdj.subscribe_commands();
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_playing_default_false() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        assert!(!vcdj.is_playing());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_set_and_get_playing() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_playing(true);
+        assert!(vcdj.is_playing());
+        vcdj.set_playing(false);
+        assert!(!vcdj.is_playing());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_playback_position_default_zero() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        assert_eq!(vcdj.playback_position(), 0);
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_adjust_and_get_playback_position() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.adjust_playback_position(42000);
+        assert_eq!(vcdj.playback_position(), 42000);
+        vcdj.adjust_playback_position(0);
+        assert_eq!(vcdj.playback_position(), 0);
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_sending_status_default_false() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        assert!(!vcdj.is_sending_status());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_set_sending_status_toggle() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_sending_status(true).await;
+        assert!(vcdj.is_sending_status());
+        vcdj.set_sending_status(false).await;
+        assert!(!vcdj.is_sending_status());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_send_on_air_command() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        let result = vcdj.send_on_air_command(&[true, false, true, false]).await;
+        assert!(result.is_ok());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_send_beat() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        let result = vcdj.send_beat(Bpm(128.0), 1).await;
+        assert!(result.is_ok());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_send_load_settings_command() {
+        use crate::device::settings::PlayerSettings;
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        let settings = PlayerSettings::default();
+        let result = vcdj.send_load_settings_command(DeviceNumber(1), &settings).await;
+        assert!(result.is_ok());
         vcdj.stop();
     }
 }

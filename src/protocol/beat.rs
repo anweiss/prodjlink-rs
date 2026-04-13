@@ -752,4 +752,81 @@ mod tests {
         let err = parse_channels_on_air(&modified).unwrap_err();
         assert!(matches!(err, ProDjLinkError::Parse(_)));
     }
+
+    // === build_beat / build_on_air tests ===
+
+    #[test]
+    fn build_beat_length_and_header() {
+        let pkt = build_beat("CDJ-2000NXS2", DeviceNumber(3), Bpm(128.0), 0x100000, 1);
+        assert_eq!(pkt.len(), 0x60);
+        assert_eq!(&pkt[..MAGIC_HEADER.len()], &MAGIC_HEADER);
+        assert_eq!(pkt[0x0a], 0x28);
+    }
+
+    #[test]
+    fn build_beat_device_name_and_number() {
+        let pkt = build_beat("TestCDJ", DeviceNumber(2), Bpm(120.0), 0x100000, 1);
+        assert_eq!(&pkt[0x0b..0x0b + 7], b"TestCDJ");
+        assert_eq!(pkt[0x21], 2);
+    }
+
+    #[test]
+    fn build_beat_bpm_and_pitch() {
+        let pkt = build_beat("CDJ", DeviceNumber(1), Bpm(140.0), 0x100000, 3);
+        // BPM = 14000 = 0x36B0
+        assert_eq!(pkt[0x5a], 0x36);
+        assert_eq!(pkt[0x5b], 0xB0);
+        // Pitch 0x100000 in 3 bytes
+        assert_eq!(pkt[0x55], 0x10);
+        assert_eq!(pkt[0x56], 0x00);
+        assert_eq!(pkt[0x57], 0x00);
+        // Beat within bar
+        assert_eq!(pkt[0x5c], 3);
+    }
+
+    #[test]
+    fn build_beat_timing_sentinels() {
+        let pkt = build_beat("CDJ", DeviceNumber(1), Bpm(120.0), 0x100000, 1);
+        for i in 0..6 {
+            let off = 0x24 + i * 4;
+            assert_eq!(&pkt[off..off + 4], &[0xFF, 0xFF, 0xFF, 0xFF]);
+        }
+    }
+
+    #[test]
+    fn build_beat_round_trip() {
+        let pkt = build_beat("CDJ-2000NXS2", DeviceNumber(3), Bpm(128.0), 0x100000, 2);
+        let beat = parse_beat(&pkt).unwrap();
+        assert_eq!(beat.device_number, DeviceNumber(3));
+        assert!((beat.bpm.0 - 128.0).abs() < 0.1);
+        assert_eq!(beat.beat_within_bar, 2);
+    }
+
+    #[test]
+    fn build_on_air_length_and_header() {
+        let pkt = build_on_air("DJM-900NXS2", DeviceNumber(33), &[true, false, true, false]);
+        assert_eq!(pkt.len(), 0x28); // 0x24 + 4
+        assert_eq!(&pkt[..MAGIC_HEADER.len()], &MAGIC_HEADER);
+        assert_eq!(pkt[0x0a], 0x03);
+    }
+
+    #[test]
+    fn build_on_air_channel_flags() {
+        let pkt = build_on_air("DJM", DeviceNumber(33), &[true, false, true, false]);
+        assert_eq!(pkt[0x24], 0x01);
+        assert_eq!(pkt[0x25], 0x00);
+        assert_eq!(pkt[0x26], 0x01);
+        assert_eq!(pkt[0x27], 0x00);
+    }
+
+    #[test]
+    fn build_on_air_round_trip() {
+        let pkt = build_on_air("DJM-900NXS2", DeviceNumber(33), &[true, true, false, false]);
+        let on_air = parse_channels_on_air(&pkt).unwrap();
+        assert_eq!(on_air.device_number, DeviceNumber(33));
+        assert_eq!(on_air.channels[&1], true);
+        assert_eq!(on_air.channels[&2], true);
+        assert_eq!(on_air.channels[&3], false);
+        assert_eq!(on_air.channels[&4], false);
+    }
 }

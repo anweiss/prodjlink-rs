@@ -25,9 +25,15 @@ pub use error::{ProDjLinkError, Result};
 
 // Protocol types
 pub use protocol::announce::DeviceAnnouncement;
-pub use protocol::beat::{Beat, ChannelsOnAir, PrecisePosition};
+pub use protocol::beat::{Beat, ChannelsOnAir, PrecisePosition, build_beat, build_on_air};
 pub use protocol::status::{
     CdjStatus, CdjStatusBuilder, CdjStatusFlags, DeviceUpdate, MixerStatus,
+};
+
+// Settings
+pub use device::settings::{
+    AutoCueLevel, JogMode, Language, LcdBrightness, PlayMode, PlayerSettings, QuantizeMode,
+    TempoRange, TimeDisplayMode,
 };
 
 // Network services
