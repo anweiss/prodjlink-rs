@@ -130,6 +130,8 @@ pub struct VirtualCdj {
     tempo_master: TempoMaster,
     /// Whether this virtual player is "playing".
     playing: Arc<AtomicBool>,
+    /// Whether this virtual player is in sync mode.
+    synced: Arc<AtomicBool>,
     /// Current playback position in milliseconds.
     playback_position: Arc<AtomicU64>,
     /// Whether we are broadcasting status packets.
@@ -210,6 +212,7 @@ impl VirtualCdj {
             command_tx,
             tempo_master,
             playing: Arc::new(AtomicBool::new(false)),
+            synced: Arc::new(AtomicBool::new(false)),
             playback_position: Arc::new(AtomicU64::new(0)),
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
@@ -320,15 +323,24 @@ impl VirtualCdj {
         self.tempo_master.resign_master();
     }
 
-    /// Set our reported BPM (only meaningful when we are the tempo master).
+    /// Set our reported BPM.
     ///
-    /// Updates the master tempo tracked by the [`TempoMaster`] and returns
-    /// `Ok(())`. If we are not currently the master, this is a no-op that
-    /// still updates the internal tempo for when we do become master.
+    /// When we are the tempo master, this immediately updates the master tempo
+    /// that gets broadcast in status packets. When we are not the master, the
+    /// value is still stored so that status packets reflect our intended tempo
+    /// (e.g. for when we later become master).
     pub fn set_tempo(&self, bpm: Bpm) {
-        if self.tempo_master.we_are_master() {
-            self.tempo_master.set_master_tempo(bpm);
-        }
+        self.tempo_master.set_master_tempo(bpm);
+    }
+
+    /// Set our virtual sync mode state (affects status packets we broadcast).
+    pub fn set_synced(&self, synced: bool) {
+        self.synced.store(synced, Ordering::Relaxed);
+    }
+
+    /// Whether our virtual player is currently in sync mode.
+    pub fn is_synced(&self) -> bool {
+        self.synced.load(Ordering::Relaxed)
     }
 
     /// Process an incoming CdjStatus to update master tracking state.
@@ -407,17 +419,20 @@ impl VirtualCdj {
     /// Start or stop the background status-broadcast loop.
     ///
     /// When `sending` is `true` a background task sends a CDJ-style status
-    /// packet to the status port every 200 ms. Calling with `false` signals
-    /// the task to exit and awaits its join handle.
+    /// packet to the status port every 200 ms, reading the current BPM and
+    /// master state from the [`TempoMaster`] watch channel. Calling with
+    /// `false` signals the task to exit and awaits its join handle.
     pub async fn set_sending_status(&self, sending: bool) {
         let was_sending = self.sending_status.swap(sending, Ordering::SeqCst);
 
         if sending && !was_sending {
             let playing = Arc::clone(&self.playing);
+            let synced = Arc::clone(&self.synced);
             let sending_flag = Arc::clone(&self.sending_status);
             let counter = Arc::clone(&self.packet_counter);
             let config = self.config.clone();
             let socket = self.status_socket.clone();
+            let master_watch = self.tempo_master.watch();
 
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(STATUS_BROADCAST_INTERVAL);
@@ -431,11 +446,12 @@ impl VirtualCdj {
                     }
 
                     let seq = counter.fetch_add(1, Ordering::Relaxed);
+                    let master_state = master_watch.borrow().clone();
 
                     let flags = CdjStatusFlags {
                         playing: playing.load(Ordering::Relaxed),
-                        master: false,
-                        synced: false,
+                        master: master_state.we_are_master,
+                        synced: synced.load(Ordering::Relaxed),
                         on_air: true,
                         bpm_sync: false,
                     };
@@ -443,6 +459,7 @@ impl VirtualCdj {
                         device_name: config.name.clone(),
                         device_number: config.device_number,
                         flags,
+                        bpm: master_state.master_tempo,
                         packet_number: seq as u32,
                         ..CdjStatusBuilder::default()
                     };
@@ -624,6 +641,7 @@ impl VirtualCdj {
             command_tx,
             tempo_master,
             playing: Arc::new(AtomicBool::new(false)),
+            synced: Arc::new(AtomicBool::new(false)),
             playback_position: Arc::new(AtomicU64::new(0)),
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
@@ -1259,13 +1277,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn vcdj_set_tempo_when_not_master_is_noop() {
+    async fn vcdj_set_tempo_always_stores_bpm() {
         let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
         let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
 
-        // Not master, so set_tempo should be a no-op
+        // Even when not master, set_tempo stores the BPM for status packets
         vcdj.set_tempo(Bpm(200.0));
-        assert!((vcdj.tempo_master().master_tempo().0).abs() < f64::EPSILON);
+        assert!((vcdj.tempo_master().master_tempo().0 - 200.0).abs() < f64::EPSILON);
 
         vcdj.stop();
     }
@@ -1658,5 +1676,117 @@ mod tests {
         assert_eq!(vcdj.local_address(), Ipv4Addr::LOCALHOST);
         assert_eq!(vcdj.broadcast_address(), Ipv4Addr::BROADCAST);
         vcdj.stop();
+    }
+
+    // === Synced State Tests ===
+
+    #[tokio::test]
+    async fn vcdj_synced_default_false() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        assert!(!vcdj.is_synced());
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_set_and_get_synced() {
+        let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_synced(true);
+        assert!(vcdj.is_synced());
+        vcdj.set_synced(false);
+        assert!(!vcdj.is_synced());
+        vcdj.stop();
+    }
+
+    // === Status Broadcast Content Tests ===
+
+    /// Helper: build the status packet that the broadcast loop would produce,
+    /// given the current VirtualCdj state. This tests the same logic the
+    /// spawned task uses without requiring actual network I/O.
+    fn build_status_from_state(
+        config: &VirtualCdjConfig,
+        playing: bool,
+        synced: bool,
+        master_state: &crate::network::tempo::MasterState,
+        seq: u32,
+    ) -> Vec<u8> {
+        let flags = CdjStatusFlags {
+            playing,
+            master: master_state.we_are_master,
+            synced,
+            on_air: true,
+            bpm_sync: false,
+        };
+        let builder = CdjStatusBuilder {
+            device_name: config.name.clone(),
+            device_number: config.device_number,
+            flags,
+            bpm: master_state.master_tempo,
+            packet_number: seq,
+            ..CdjStatusBuilder::default()
+        };
+        build_cdj_status(&builder)
+    }
+
+    #[test]
+    fn status_broadcast_reflects_master_tempo() {
+        use crate::protocol::status::parse_cdj_status;
+
+        let config = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let master_state = crate::network::tempo::MasterState {
+            master_device: Some(DeviceNumber(5)),
+            master_tempo: Bpm(128.5),
+            we_are_master: true,
+            updated_at: std::time::Instant::now(),
+        };
+
+        let packet = build_status_from_state(&config, true, true, &master_state, 42);
+        let status = parse_cdj_status(&packet).expect("should parse status packet");
+
+        assert!((status.bpm.0 - 128.5).abs() < 0.01);
+        assert!(status.is_master);
+        assert!(status.is_synced);
+        assert!(status.is_playing_flag);
+    }
+
+    #[test]
+    fn status_broadcast_defaults_when_not_master() {
+        use crate::protocol::status::parse_cdj_status;
+
+        let config = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let master_state = crate::network::tempo::MasterState {
+            master_device: None,
+            master_tempo: Bpm(0.0),
+            we_are_master: false,
+            updated_at: std::time::Instant::now(),
+        };
+
+        let packet = build_status_from_state(&config, false, false, &master_state, 0);
+        let status = parse_cdj_status(&packet).expect("should parse status packet");
+
+        assert!(!status.is_master);
+        assert!(!status.is_synced);
+        assert!(!status.is_playing_flag);
+    }
+
+    #[test]
+    fn status_broadcast_includes_set_tempo_bpm() {
+        use crate::protocol::status::parse_cdj_status;
+
+        let config = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        // Simulate: we called set_tempo(135.0) before becoming master
+        let master_state = crate::network::tempo::MasterState {
+            master_device: None,
+            master_tempo: Bpm(135.0),
+            we_are_master: false,
+            updated_at: std::time::Instant::now(),
+        };
+
+        let packet = build_status_from_state(&config, false, false, &master_state, 1);
+        let status = parse_cdj_status(&packet).expect("should parse status packet");
+
+        // BPM should reflect set_tempo value even when not master
+        assert!((status.bpm.0 - 135.0).abs() < 0.01);
     }
 }
