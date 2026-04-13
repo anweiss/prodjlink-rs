@@ -8,14 +8,17 @@ pub mod protocol;
 
 pub mod util;
 
+#[doc(hidden)]
+pub mod testing;
+
 // ---------------------------------------------------------------------------
 // Re-exports — flat access to the most commonly used types
 // ---------------------------------------------------------------------------
 
 // Core types
 pub use device::types::{
-    BeatNumber, Bpm, DeviceNumber, DeviceType, OnAirStatus, OpusQuadMode, Pitch, PlayState,
-    PlayState2, PlayState3, TrackSourceSlot, TrackType,
+    BeatNumber, Bpm, DeckReference, DeviceNumber, DeviceType, OnAirStatus, OpusQuadMode, Pitch,
+    PlayState, PlayState2, PlayState3, PlaybackState, SlotReference, TrackSourceSlot, TrackType,
     remap_opus_quad_device, unmap_opus_quad_device,
 };
 pub use error::{ProDjLinkError, Result};
@@ -33,12 +36,14 @@ pub use network::finder::{DeviceFinder, FinderEvent};
 pub use network::interface::{find_interface_by_ip, find_matching_interface, NetworkInterface};
 pub use network::status::StatusListener;
 pub use network::tempo::{MasterState, TempoMaster, TempoMasterEvent};
+pub use network::time::{PositionUpdate, TimeFinder};
 pub use network::virtual_cdj::{CommandEvent, VirtualCdj, VirtualCdjConfig};
 
 // Data types
 pub use data::artwork::{AlbumArt, ArtworkReference, ImageFormat};
 pub use data::beatgrid::{BeatGrid, BeatGridEntry};
 pub use data::cue::{CueColor, CueEntry, CueList, CueType};
+pub use data::menu::{MenuItem, MenuLoader};
 pub use data::metadata::{DataReference, SearchableItem, TrackMetadata};
 pub use data::waveform::{WaveformDetail, WaveformPreview, WaveformStyle};
 
