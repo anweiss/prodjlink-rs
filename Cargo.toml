@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 bytes = "1"
-nom = "8"
 thiserror = "2"
 tracing = "0.1"
 dashmap = "6"
