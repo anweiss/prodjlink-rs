@@ -558,7 +558,7 @@ mod tests {
             1, 3, 3, &ascii_to_utf16("USB"), 100, 5, 0, true,
             1_000_000, 500_000,
         );
-        // Write a UTF-16BE creation date at CREATION_DATE_OFFSET
+        // Write a UTF-16BE creation date at CREATION_DATE_OFFSET with null terminator
         let date_units = ascii_to_utf16("2024-03-15");
         for (i, &unit) in date_units.iter().enumerate() {
             let off = CREATION_DATE_OFFSET + i * 2;
@@ -567,6 +567,12 @@ mod tests {
                 pkt[off] = be[0];
                 pkt[off + 1] = be[1];
             }
+        }
+        // Null-terminate
+        let term_off = CREATION_DATE_OFFSET + date_units.len() * 2;
+        if term_off + 1 < pkt.len() {
+            pkt[term_off] = 0;
+            pkt[term_off + 1] = 0;
         }
         let md = parse_media_details(&pkt).unwrap();
         assert_eq!(md.creation_date, "2024-03-15");

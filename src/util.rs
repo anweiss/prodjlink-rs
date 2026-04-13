@@ -342,4 +342,123 @@ mod tests {
         let data = b"Hello World";
         assert_eq!(read_device_name(data, 0, 5), "Hello");
     }
+
+    // --- half_frame / time conversions ---
+
+    #[test]
+    fn half_frame_to_time_zero() {
+        assert_eq!(half_frame_to_time(0), 0);
+    }
+
+    #[test]
+    fn half_frame_to_time_known_value() {
+        // 150 half-frames = 1 second = 1000 ms
+        // 150 * 100 / 15 = 1000
+        assert_eq!(half_frame_to_time(150), 1000);
+    }
+
+    #[test]
+    fn half_frame_to_time_one() {
+        // 1 half-frame = 100/15 = 6 ms (integer division)
+        assert_eq!(half_frame_to_time(1), 6);
+    }
+
+    #[test]
+    fn time_to_half_frame_zero() {
+        assert_eq!(time_to_half_frame(0), 0);
+    }
+
+    #[test]
+    fn time_to_half_frame_one_second() {
+        // 1000 ms → (1000*15 + 50) / 100 = 15050/100 = 150
+        assert_eq!(time_to_half_frame(1000), 150);
+    }
+
+    #[test]
+    fn time_to_half_frame_rounded_one_second() {
+        assert_eq!(time_to_half_frame_rounded(1000), 150);
+    }
+
+    #[test]
+    fn time_to_half_frame_rounded_small() {
+        // 1 ms → (1*15 + 99) / 100 = 114/100 = 1
+        assert_eq!(time_to_half_frame_rounded(1), 1);
+    }
+
+    #[test]
+    fn half_frame_round_trip() {
+        let ms = 5000u64;
+        let hf = time_to_half_frame(ms);
+        let back = half_frame_to_time(hf);
+        // Allow ±1 ms rounding error
+        assert!((back as i64 - ms as i64).unsigned_abs() <= 1);
+    }
+
+    // --- phrase_color ---
+
+    #[test]
+    fn phrase_color_red_variants() {
+        assert_eq!(phrase_color(1, 0), PHRASE_LOW_RED);
+        assert_eq!(phrase_color(1, 1), PHRASE_MID_RED);
+        assert_eq!(phrase_color(1, 2), PHRASE_HIGH_RED);
+    }
+
+    #[test]
+    fn phrase_color_pink_variants() {
+        assert_eq!(phrase_color(2, 0), PHRASE_LOW_PINK);
+        assert_eq!(phrase_color(2, 1), PHRASE_MID_PINK);
+        assert_eq!(phrase_color(2, 2), PHRASE_HIGH_PINK);
+    }
+
+    #[test]
+    fn phrase_color_blue_variants() {
+        assert_eq!(phrase_color(3, 0), PHRASE_LOW_BLUE);
+        assert_eq!(phrase_color(3, 1), PHRASE_MID_BLUE);
+        assert_eq!(phrase_color(3, 2), PHRASE_HIGH_BLUE);
+    }
+
+    #[test]
+    fn phrase_color_green_variants() {
+        assert_eq!(phrase_color(4, 0), PHRASE_LOW_GREEN);
+        assert_eq!(phrase_color(4, 1), PHRASE_MID_GREEN);
+        assert_eq!(phrase_color(4, 2), PHRASE_HIGH_GREEN);
+    }
+
+    #[test]
+    fn phrase_color_purple_variants() {
+        assert_eq!(phrase_color(5, 0), PHRASE_LOW_PURPLE);
+        assert_eq!(phrase_color(5, 1), PHRASE_MID_PURPLE);
+        assert_eq!(phrase_color(5, 2), PHRASE_HIGH_PURPLE);
+    }
+
+    #[test]
+    fn phrase_color_unknown_mood_returns_white() {
+        assert_eq!(phrase_color(0, 0), (0xff, 0xff, 0xff));
+        assert_eq!(phrase_color(99, 1), (0xff, 0xff, 0xff));
+    }
+
+    #[test]
+    fn phrase_color_high_intensity_clamp() {
+        // intensity ≥ 2 always returns high
+        assert_eq!(phrase_color(1, 5), PHRASE_HIGH_RED);
+        assert_eq!(phrase_color(3, 255), PHRASE_HIGH_BLUE);
+    }
+
+    // --- phrase_label ---
+
+    #[test]
+    fn phrase_label_known_moods() {
+        assert_eq!(phrase_label(1), "High");
+        assert_eq!(phrase_label(2), "Mid");
+        assert_eq!(phrase_label(3), "Low");
+        assert_eq!(phrase_label(4), "Verse");
+        assert_eq!(phrase_label(5), "Chorus");
+    }
+
+    #[test]
+    fn phrase_label_unknown_mood() {
+        assert_eq!(phrase_label(0), "Unknown");
+        assert_eq!(phrase_label(6), "Unknown");
+        assert_eq!(phrase_label(255), "Unknown");
+    }
 }
