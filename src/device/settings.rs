@@ -24,23 +24,23 @@ pub enum LcdBrightness {
 impl LcdBrightness {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::White => 0,
-            Self::One => 1,
-            Self::Two => 2,
-            Self::Three => 3,
-            Self::Four => 4,
-            Self::Five => 5,
+            Self::White => 0x80,
+            Self::One => 0x81,
+            Self::Two => 0x82,
+            Self::Three => 0x83,
+            Self::Four => 0x84,
+            Self::Five => 0x85,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::White,
-            1 => Self::One,
-            2 => Self::Two,
-            3 => Self::Three,
-            4 => Self::Four,
-            5 => Self::Five,
+            0x80 => Self::White,
+            0x81 => Self::One,
+            0x82 => Self::Two,
+            0x83 => Self::Three,
+            0x84 => Self::Four,
+            0x85 => Self::Five,
             _ => Self::One,
         }
     }
@@ -56,15 +56,15 @@ pub enum JogMode {
 impl JogMode {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Cdj => 0,
-            Self::Vinyl => 1,
+            Self::Cdj => 0x80,
+            Self::Vinyl => 0x81,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::Cdj,
-            1 => Self::Vinyl,
+            0x80 => Self::Cdj,
+            0x81 => Self::Vinyl,
             _ => Self::Cdj,
         }
     }
@@ -82,19 +82,19 @@ pub enum TempoRange {
 impl TempoRange {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Six => 1,
-            Self::Ten => 2,
-            Self::Sixteen => 3,
-            Self::Wide => 4,
+            Self::Six => 0x80,
+            Self::Ten => 0x81,
+            Self::Sixteen => 0x82,
+            Self::Wide => 0x83,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            1 => Self::Six,
-            2 => Self::Ten,
-            3 => Self::Sixteen,
-            4 => Self::Wide,
+            0x80 => Self::Six,
+            0x81 => Self::Ten,
+            0x82 => Self::Sixteen,
+            0x83 => Self::Wide,
             _ => Self::Ten,
         }
     }
@@ -117,29 +117,29 @@ pub enum AutoCueLevel {
 impl AutoCueLevel {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Minus36 => 0,
-            Self::Minus42 => 1,
-            Self::Minus48 => 2,
-            Self::Minus54 => 3,
-            Self::Minus60 => 4,
-            Self::Minus66 => 5,
-            Self::Minus72 => 6,
-            Self::Minus78 => 7,
-            Self::MemoryCue => 8,
+            Self::Minus36 => 0x80,
+            Self::Minus42 => 0x81,
+            Self::Minus48 => 0x82,
+            Self::Minus54 => 0x83,
+            Self::Minus60 => 0x84,
+            Self::Minus66 => 0x85,
+            Self::Minus72 => 0x86,
+            Self::Minus78 => 0x87,
+            Self::MemoryCue => 0x88,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::Minus36,
-            1 => Self::Minus42,
-            2 => Self::Minus48,
-            3 => Self::Minus54,
-            4 => Self::Minus60,
-            5 => Self::Minus66,
-            6 => Self::Minus72,
-            7 => Self::Minus78,
-            8 => Self::MemoryCue,
+            0x80 => Self::Minus36,
+            0x81 => Self::Minus42,
+            0x82 => Self::Minus48,
+            0x83 => Self::Minus54,
+            0x84 => Self::Minus60,
+            0x85 => Self::Minus66,
+            0x86 => Self::Minus72,
+            0x87 => Self::Minus78,
+            0x88 => Self::MemoryCue,
             _ => Self::Minus48,
         }
     }
@@ -171,47 +171,47 @@ pub enum Language {
 impl Language {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::English => 1,
-            Self::French => 2,
-            Self::German => 3,
-            Self::Italian => 4,
-            Self::Dutch => 5,
-            Self::Spanish => 6,
-            Self::Russian => 7,
-            Self::Korean => 8,
-            Self::ChineseSimplified => 9,
-            Self::ChineseTraditional => 10,
-            Self::Japanese => 11,
-            Self::Portuguese => 12,
-            Self::Swedish => 13,
-            Self::Czech => 14,
-            Self::Hungarian => 15,
-            Self::Danish => 16,
-            Self::Greek => 17,
-            Self::Turkish => 18,
+            Self::English => 0x81,
+            Self::French => 0x82,
+            Self::German => 0x83,
+            Self::Italian => 0x84,
+            Self::Dutch => 0x85,
+            Self::Spanish => 0x86,
+            Self::Russian => 0x87,
+            Self::Korean => 0x88,
+            Self::ChineseSimplified => 0x89,
+            Self::ChineseTraditional => 0x8a,
+            Self::Japanese => 0x8b,
+            Self::Portuguese => 0x8c,
+            Self::Swedish => 0x8d,
+            Self::Czech => 0x8e,
+            Self::Hungarian => 0x8f,
+            Self::Danish => 0x90,
+            Self::Greek => 0x91,
+            Self::Turkish => 0x92,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            1 => Self::English,
-            2 => Self::French,
-            3 => Self::German,
-            4 => Self::Italian,
-            5 => Self::Dutch,
-            6 => Self::Spanish,
-            7 => Self::Russian,
-            8 => Self::Korean,
-            9 => Self::ChineseSimplified,
-            10 => Self::ChineseTraditional,
-            11 => Self::Japanese,
-            12 => Self::Portuguese,
-            13 => Self::Swedish,
-            14 => Self::Czech,
-            15 => Self::Hungarian,
-            16 => Self::Danish,
-            17 => Self::Greek,
-            18 => Self::Turkish,
+            0x81 => Self::English,
+            0x82 => Self::French,
+            0x83 => Self::German,
+            0x84 => Self::Italian,
+            0x85 => Self::Dutch,
+            0x86 => Self::Spanish,
+            0x87 => Self::Russian,
+            0x88 => Self::Korean,
+            0x89 => Self::ChineseSimplified,
+            0x8a => Self::ChineseTraditional,
+            0x8b => Self::Japanese,
+            0x8c => Self::Portuguese,
+            0x8d => Self::Swedish,
+            0x8e => Self::Czech,
+            0x8f => Self::Hungarian,
+            0x90 => Self::Danish,
+            0x91 => Self::Greek,
+            0x92 => Self::Turkish,
             _ => Self::English,
         }
     }
@@ -227,15 +227,15 @@ pub enum TimeDisplayMode {
 impl TimeDisplayMode {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Elapsed => 0,
-            Self::Remaining => 1,
+            Self::Elapsed => 0x80,
+            Self::Remaining => 0x81,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::Elapsed,
-            1 => Self::Remaining,
+            0x80 => Self::Elapsed,
+            0x81 => Self::Remaining,
             _ => Self::Elapsed,
         }
     }
@@ -251,15 +251,15 @@ pub enum PlayMode {
 impl PlayMode {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Continue => 0,
-            Self::Single => 1,
+            Self::Continue => 0x80,
+            Self::Single => 0x81,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::Continue,
-            1 => Self::Single,
+            0x80 => Self::Continue,
+            0x81 => Self::Single,
             _ => Self::Continue,
         }
     }
@@ -275,15 +275,15 @@ pub enum QuantizeMode {
 impl QuantizeMode {
     pub fn to_byte(self) -> u8 {
         match self {
-            Self::Off => 0,
-            Self::On => 1,
+            Self::Off => 0x80,
+            Self::On => 0x81,
         }
     }
 
     pub fn from_byte(b: u8) -> Self {
         match b {
-            0 => Self::Off,
-            1 => Self::On,
+            0x80 => Self::Off,
+            0x81 => Self::On,
             _ => Self::On,
         }
     }
@@ -452,14 +452,14 @@ mod tests {
         let s = PlayerSettings::default();
         let pkt = s.build_settings_packet(5, 1);
         let base = PREFIX_LEN;
-        assert_eq!(pkt[base + LCD_BRIGHTNESS_OFF], 1); // LcdBrightness::One
-        assert_eq!(pkt[base + JOG_MODE_OFF], 0); // JogMode::Cdj
-        assert_eq!(pkt[base + AUTO_CUE_LEVEL_OFF], 2); // AutoCueLevel::Minus48
-        assert_eq!(pkt[base + TEMPO_RANGE_OFF], 2); // TempoRange::Ten
-        assert_eq!(pkt[base + LANGUAGE_OFF], 1); // Language::English
-        assert_eq!(pkt[base + TIME_DISPLAY_OFF], 0); // TimeDisplayMode::Elapsed
-        assert_eq!(pkt[base + PLAY_MODE_OFF], 0); // PlayMode::Continue
-        assert_eq!(pkt[base + QUANTIZE_OFF], 1); // QuantizeMode::On
+        assert_eq!(pkt[base + LCD_BRIGHTNESS_OFF], 0x81); // LcdBrightness::One
+        assert_eq!(pkt[base + JOG_MODE_OFF], 0x80); // JogMode::Cdj
+        assert_eq!(pkt[base + AUTO_CUE_LEVEL_OFF], 0x82); // AutoCueLevel::Minus48
+        assert_eq!(pkt[base + TEMPO_RANGE_OFF], 0x81); // TempoRange::Ten
+        assert_eq!(pkt[base + LANGUAGE_OFF], 0x81); // Language::English
+        assert_eq!(pkt[base + TIME_DISPLAY_OFF], 0x80); // TimeDisplayMode::Elapsed
+        assert_eq!(pkt[base + PLAY_MODE_OFF], 0x80); // PlayMode::Continue
+        assert_eq!(pkt[base + QUANTIZE_OFF], 0x81); // QuantizeMode::On
     }
 
     #[test]
@@ -476,14 +476,14 @@ mod tests {
         };
         let pkt = s.build_settings_packet(5, 2);
         let base = PREFIX_LEN;
-        assert_eq!(pkt[base + LCD_BRIGHTNESS_OFF], 5);
-        assert_eq!(pkt[base + JOG_MODE_OFF], 1);
-        assert_eq!(pkt[base + AUTO_CUE_LEVEL_OFF], 6);
-        assert_eq!(pkt[base + TEMPO_RANGE_OFF], 4);
-        assert_eq!(pkt[base + LANGUAGE_OFF], 11);
-        assert_eq!(pkt[base + TIME_DISPLAY_OFF], 1);
-        assert_eq!(pkt[base + PLAY_MODE_OFF], 1);
-        assert_eq!(pkt[base + QUANTIZE_OFF], 0);
+        assert_eq!(pkt[base + LCD_BRIGHTNESS_OFF], 0x85);
+        assert_eq!(pkt[base + JOG_MODE_OFF], 0x81);
+        assert_eq!(pkt[base + AUTO_CUE_LEVEL_OFF], 0x86);
+        assert_eq!(pkt[base + TEMPO_RANGE_OFF], 0x83);
+        assert_eq!(pkt[base + LANGUAGE_OFF], 0x8b);
+        assert_eq!(pkt[base + TIME_DISPLAY_OFF], 0x81);
+        assert_eq!(pkt[base + PLAY_MODE_OFF], 0x81);
+        assert_eq!(pkt[base + QUANTIZE_OFF], 0x80);
     }
 
     // -- Enum round-trip tests --
@@ -555,5 +555,59 @@ mod tests {
         for variant in [QuantizeMode::Off, QuantizeMode::On] {
             assert_eq!(QuantizeMode::from_byte(variant.to_byte()), variant);
         }
+    }
+
+    // -- Protocol byte value verification (matches Java PlayerSettings) --
+
+    #[test]
+    fn lcd_brightness_protocol_values() {
+        assert_eq!(LcdBrightness::White.to_byte(), 0x80);
+        assert_eq!(LcdBrightness::One.to_byte(), 0x81);
+        assert_eq!(LcdBrightness::Five.to_byte(), 0x85);
+    }
+
+    #[test]
+    fn jog_mode_protocol_values() {
+        assert_eq!(JogMode::Cdj.to_byte(), 0x80);
+        assert_eq!(JogMode::Vinyl.to_byte(), 0x81);
+    }
+
+    #[test]
+    fn auto_cue_level_protocol_values() {
+        assert_eq!(AutoCueLevel::Minus36.to_byte(), 0x80);
+        assert_eq!(AutoCueLevel::Minus48.to_byte(), 0x82);
+        assert_eq!(AutoCueLevel::MemoryCue.to_byte(), 0x88);
+    }
+
+    #[test]
+    fn language_protocol_values() {
+        assert_eq!(Language::English.to_byte(), 0x81);
+        assert_eq!(Language::Japanese.to_byte(), 0x8b);
+        assert_eq!(Language::Turkish.to_byte(), 0x92);
+    }
+
+    #[test]
+    fn tempo_range_protocol_values() {
+        assert_eq!(TempoRange::Six.to_byte(), 0x80);
+        assert_eq!(TempoRange::Ten.to_byte(), 0x81);
+        assert_eq!(TempoRange::Wide.to_byte(), 0x83);
+    }
+
+    #[test]
+    fn time_display_protocol_values() {
+        assert_eq!(TimeDisplayMode::Elapsed.to_byte(), 0x80);
+        assert_eq!(TimeDisplayMode::Remaining.to_byte(), 0x81);
+    }
+
+    #[test]
+    fn play_mode_protocol_values() {
+        assert_eq!(PlayMode::Continue.to_byte(), 0x80);
+        assert_eq!(PlayMode::Single.to_byte(), 0x81);
+    }
+
+    #[test]
+    fn quantize_mode_protocol_values() {
+        assert_eq!(QuantizeMode::Off.to_byte(), 0x80);
+        assert_eq!(QuantizeMode::On.to_byte(), 0x81);
     }
 }

@@ -1,4 +1,5 @@
 use std::fmt;
+use std::net::Ipv4Addr;
 
 // ---------------------------------------------------------------------------
 // DeviceNumber
@@ -381,6 +382,33 @@ pub fn unmap_opus_quad_device(player_num: u8, lighting: bool) -> u8 {
 }
 
 // ---------------------------------------------------------------------------
+// DeviceReference
+// ---------------------------------------------------------------------------
+
+/// A reference to a specific device on the network, identified by its
+/// device number and IP address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeviceReference {
+    pub device_number: DeviceNumber,
+    pub address: Ipv4Addr,
+}
+
+impl DeviceReference {
+    pub fn new(device_number: DeviceNumber, address: Ipv4Addr) -> Self {
+        Self {
+            device_number,
+            address,
+        }
+    }
+}
+
+impl fmt::Display for DeviceReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Device {} @ {}", self.device_number, self.address)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SlotReference
 // ---------------------------------------------------------------------------
 
@@ -587,5 +615,43 @@ mod tests {
         assert_eq!(PlayState2::from(0x6e), PlayState2::Stopped);
         assert_eq!(PlayState2::from(0x7e), PlayState2::Stopped);
         assert_eq!(PlayState2::from(0xfe), PlayState2::Stopped);
+    }
+
+    // -- DeviceReference --
+
+    #[test]
+    fn device_reference_new() {
+        let addr = Ipv4Addr::new(192, 168, 1, 10);
+        let dr = DeviceReference::new(DeviceNumber(3), addr);
+        assert_eq!(dr.device_number, DeviceNumber(3));
+        assert_eq!(dr.address, addr);
+    }
+
+    #[test]
+    fn device_reference_display() {
+        let dr = DeviceReference::new(DeviceNumber(2), Ipv4Addr::new(10, 0, 0, 5));
+        assert_eq!(format!("{dr}"), "Device 2 @ 10.0.0.5");
+    }
+
+    #[test]
+    fn device_reference_eq_and_hash() {
+        use std::collections::HashSet;
+        let a = DeviceReference::new(DeviceNumber(1), Ipv4Addr::new(192, 168, 1, 1));
+        let b = DeviceReference::new(DeviceNumber(1), Ipv4Addr::new(192, 168, 1, 1));
+        let c = DeviceReference::new(DeviceNumber(2), Ipv4Addr::new(192, 168, 1, 1));
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+
+        let mut set = HashSet::new();
+        set.insert(a);
+        assert!(set.contains(&b));
+        assert!(!set.contains(&c));
+    }
+
+    #[test]
+    fn device_reference_clone_copy() {
+        let dr = DeviceReference::new(DeviceNumber(4), Ipv4Addr::new(172, 16, 0, 1));
+        let cloned = dr;
+        assert_eq!(dr, cloned);
     }
 }

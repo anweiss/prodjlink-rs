@@ -63,6 +63,18 @@ impl CueEntry {
     pub fn is_memory_point(&self) -> bool {
         self.cue_type == CueType::MemoryPoint
     }
+
+    /// The cue position in milliseconds.
+    pub fn time_ms(&self) -> Option<u64> {
+        Some(self.position_ms as u64)
+    }
+
+    /// The loop end position in milliseconds (for loop cues).
+    ///
+    /// Returns `None` for non-loop cues.
+    pub fn loop_time_ms(&self) -> Option<u64> {
+        self.loop_end_ms.map(|ms| ms as u64)
+    }
 }
 
 /// A complete cue list for a track.
@@ -106,6 +118,16 @@ impl CueList {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    /// Count of hot cues only.
+    pub fn hot_cue_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_hot_cue()).count()
+    }
+
+    /// Count of memory points only.
+    pub fn memory_point_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_memory_point()).count()
     }
 
     /// Parse a cue list from dbserver menu item responses.
@@ -664,6 +686,47 @@ mod tests {
         assert!(list.memory_points().is_empty());
         assert!(list.loops().is_empty());
         assert!(list.hot_cue(1).is_none());
+    }
+
+    // --- hot_cue_count / memory_point_count ---
+
+    #[test]
+    fn hot_cue_count() {
+        let list = sample_cue_list();
+        assert_eq!(list.hot_cue_count(), 3);
+    }
+
+    #[test]
+    fn memory_point_count() {
+        let list = sample_cue_list();
+        assert_eq!(list.memory_point_count(), 2);
+    }
+
+    #[test]
+    fn counts_on_empty_list() {
+        let list = CueList::new(vec![]);
+        assert_eq!(list.hot_cue_count(), 0);
+        assert_eq!(list.memory_point_count(), 0);
+    }
+
+    // --- time_ms / loop_time_ms ---
+
+    #[test]
+    fn time_ms_accessor() {
+        let entry = make_memory_point(4200);
+        assert_eq!(entry.time_ms(), Some(4200));
+    }
+
+    #[test]
+    fn loop_time_ms_for_loop() {
+        let entry = make_loop(1000, 2000);
+        assert_eq!(entry.loop_time_ms(), Some(2000));
+    }
+
+    #[test]
+    fn loop_time_ms_none_for_non_loop() {
+        let entry = make_hot_cue(1, 500);
+        assert_eq!(entry.loop_time_ms(), None);
     }
 
     // --- from_menu_items ---

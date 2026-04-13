@@ -126,6 +126,16 @@ impl WaveformPreview {
             .max()
             .unwrap_or(0)
     }
+
+    /// Number of segments in the preview.
+    pub fn segment_count(&self) -> usize {
+        self.segment_count
+    }
+
+    /// Whether this is a color (RGB or ThreeBand) waveform vs blue.
+    pub fn is_color(&self) -> bool {
+        !matches!(self.style, WaveformStyle::Blue)
+    }
 }
 
 /// A waveform detail (full resolution).
@@ -212,6 +222,16 @@ impl WaveformDetail {
     /// Each frame represents a half-frame of audio (1/150 of a second).
     pub fn total_time_ms(&self) -> u64 {
         (self.frame_count as u64) * 1000 / 150
+    }
+
+    /// Number of frames in the detail waveform.
+    pub fn frame_count(&self) -> usize {
+        self.frame_count
+    }
+
+    /// Whether this is a color (RGB or ThreeBand) waveform vs blue.
+    pub fn is_color(&self) -> bool {
+        !matches!(self.style, WaveformStyle::Blue)
     }
 
     /// Parse a waveform detail from raw data bytes (from dbserver BinaryField).
@@ -523,5 +543,71 @@ mod tests {
         let data = Bytes::from(buf);
         let detail = WaveformDetail::from_bytes(data, WaveformStyle::Blue).unwrap();
         assert_eq!(detail.total_time_ms(), 0);
+    }
+
+    // --- segment_count / frame_count / is_color accessors ---
+
+    #[test]
+    fn preview_segment_count_accessor() {
+        let data = make_blue_preview_data(42);
+        let preview = WaveformPreview::from_bytes(data, WaveformStyle::Blue).unwrap();
+        assert_eq!(preview.segment_count(), 42);
+    }
+
+    #[test]
+    fn preview_is_color_blue() {
+        let data = make_blue_preview_data(1);
+        let preview = WaveformPreview::from_bytes(data, WaveformStyle::Blue).unwrap();
+        assert!(!preview.is_color());
+    }
+
+    #[test]
+    fn preview_is_color_rgb() {
+        let data = make_rgb_preview_data(1);
+        let preview = WaveformPreview::from_bytes(data, WaveformStyle::Rgb).unwrap();
+        assert!(preview.is_color());
+    }
+
+    #[test]
+    fn preview_is_color_threeband() {
+        let data = make_threeband_preview_data(1);
+        let preview = WaveformPreview::from_bytes(data, WaveformStyle::ThreeBand).unwrap();
+        assert!(preview.is_color());
+    }
+
+    #[test]
+    fn detail_frame_count_accessor() {
+        let mut buf = vec![0xCC; 19];
+        buf.extend_from_slice(&[0x01, 0x02, 0x03]);
+        let data = Bytes::from(buf);
+        let detail = WaveformDetail::from_bytes(data, WaveformStyle::Blue).unwrap();
+        assert_eq!(detail.frame_count(), 3);
+    }
+
+    #[test]
+    fn detail_is_color_blue() {
+        let mut buf = vec![0xCC; 19];
+        buf.push(0x01);
+        let data = Bytes::from(buf);
+        let detail = WaveformDetail::from_bytes(data, WaveformStyle::Blue).unwrap();
+        assert!(!detail.is_color());
+    }
+
+    #[test]
+    fn detail_is_color_rgb() {
+        let mut buf = vec![0xDD; 28];
+        buf.extend_from_slice(&[0xAB, 0xCD]);
+        let data = Bytes::from(buf);
+        let detail = WaveformDetail::from_bytes(data, WaveformStyle::Rgb).unwrap();
+        assert!(detail.is_color());
+    }
+
+    #[test]
+    fn detail_is_color_threeband() {
+        let mut buf = vec![0xEE; 28];
+        buf.extend_from_slice(&[0x10, 0x20, 0x30]);
+        let data = Bytes::from(buf);
+        let detail = WaveformDetail::from_bytes(data, WaveformStyle::ThreeBand).unwrap();
+        assert!(detail.is_color());
     }
 }

@@ -17,15 +17,18 @@ pub mod testing;
 
 // Core types
 pub use device::types::{
-    BeatNumber, Bpm, DeckReference, DeviceNumber, DeviceType, OnAirStatus, OpusQuadMode, Pitch,
-    PlayState, PlayState2, PlayState3, PlaybackState, SlotReference, TrackSourceSlot, TrackType,
-    remap_opus_quad_device, unmap_opus_quad_device,
+    BeatNumber, Bpm, DeckReference, DeviceNumber, DeviceReference, DeviceType, OnAirStatus,
+    OpusQuadMode, Pitch, PlayState, PlayState2, PlayState3, PlaybackState, SlotReference,
+    TrackSourceSlot, TrackType, remap_opus_quad_device, unmap_opus_quad_device,
 };
 pub use error::{ProDjLinkError, Result};
 
 // Protocol types
 pub use protocol::announce::DeviceAnnouncement;
-pub use protocol::beat::{Beat, ChannelsOnAir, PrecisePosition, build_beat, build_on_air};
+pub use protocol::beat::{
+    Beat, ChannelsOnAir, FaderStartEvent, MasterHandoffEvent, PrecisePosition, SyncEvent,
+    build_beat, build_on_air,
+};
 pub use protocol::status::{
     CdjStatus, CdjStatusBuilder, CdjStatusFlags, DeviceUpdate, MixerStatus,
 };
@@ -192,6 +195,21 @@ impl ProDjLink {
     /// Subscribe to channels-on-air updates from mixers.
     pub fn subscribe_on_air(&self) -> tokio::sync::broadcast::Receiver<ChannelsOnAir> {
         self.beat_finder.subscribe_on_air()
+    }
+
+    /// Subscribe to sync control events.
+    pub fn subscribe_sync(&self) -> tokio::sync::broadcast::Receiver<SyncEvent> {
+        self.beat_finder.subscribe_sync()
+    }
+
+    /// Subscribe to master-handoff request events.
+    pub fn subscribe_master_handoff(&self) -> tokio::sync::broadcast::Receiver<MasterHandoffEvent> {
+        self.beat_finder.subscribe_master_handoff()
+    }
+
+    /// Subscribe to fader-start command events.
+    pub fn subscribe_fader_start(&self) -> tokio::sync::broadcast::Receiver<FaderStartEvent> {
+        self.beat_finder.subscribe_fader_start()
     }
 
     // --- Status ---
