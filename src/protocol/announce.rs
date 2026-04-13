@@ -3,11 +3,12 @@ use std::time::Instant;
 
 use crate::device::types::{DeviceNumber, DeviceType};
 use crate::error::{ProDjLinkError, Result};
-use crate::protocol::header::{PacketType, MAGIC_HEADER, PACKET_TYPE_OFFSET};
+use crate::protocol::header::{MAGIC_HEADER, PACKET_TYPE_OFFSET, PacketType};
 use crate::util::{bytes_to_ipv4, bytes_to_mac, read_device_name};
 
 /// Required size for a keep-alive packet (Java requires exactly 0x36 bytes).
 const KEEP_ALIVE_MIN_SIZE: usize = 0x36;
+const DEVICE_LIBRARY_PLUS_OFFSET: usize = 0x36;
 
 // Keep-alive field offsets (distinct from status-packet offsets on port 50002)
 const NAME_OFFSET: usize = 0x0c;
@@ -48,6 +49,8 @@ pub struct DeviceAnnouncement {
     pub is_opus_quad: bool,
     /// Whether this device is an XDJ-AZ.
     pub is_xdj_az: bool,
+    /// Whether the device advertises Device Library Plus support.
+    pub is_using_device_library_plus: bool,
     /// When this announcement was last received.
     pub last_seen: Instant,
 }
@@ -76,6 +79,9 @@ pub fn parse_keep_alive(data: &[u8]) -> Result<DeviceAnnouncement> {
     let peer_count = data[PEER_COUNT_OFFSET];
     let is_opus_quad = name == "OPUS-QUAD";
     let is_xdj_az = name == "XDJ-AZ";
+    let is_using_device_library_plus = data
+        .get(DEVICE_LIBRARY_PLUS_OFFSET)
+        .map_or(false, |&b| b != 0);
 
     Ok(DeviceAnnouncement {
         name,
@@ -86,6 +92,7 @@ pub fn parse_keep_alive(data: &[u8]) -> Result<DeviceAnnouncement> {
         peer_count,
         is_opus_quad,
         is_xdj_az,
+        is_using_device_library_plus,
         last_seen: Instant::now(),
     })
 }
@@ -432,24 +439,14 @@ mod tests {
 
     #[test]
     fn build_packet_size() {
-        let pkt = build_keep_alive(
-            "Test",
-            DeviceNumber(1),
-            [0; 6],
-            Ipv4Addr::LOCALHOST,
-        );
+        let pkt = build_keep_alive("Test", DeviceNumber(1), [0; 6], Ipv4Addr::LOCALHOST);
         assert_eq!(pkt.len(), KEEP_ALIVE_PACKET_SIZE);
     }
 
     #[test]
     fn name_truncated_to_max_len() {
         let long_name = "A_Very_Long_Device_Name_Exceeding_Twenty";
-        let pkt = build_keep_alive(
-            long_name,
-            DeviceNumber(1),
-            [0; 6],
-            Ipv4Addr::LOCALHOST,
-        );
+        let pkt = build_keep_alive(long_name, DeviceNumber(1), [0; 6], Ipv4Addr::LOCALHOST);
         let ann = parse_keep_alive(&pkt).unwrap();
         assert_eq!(ann.name.len(), NAME_MAX_LEN);
         assert_eq!(ann.name, &long_name[..NAME_MAX_LEN]);
@@ -678,5 +675,28 @@ mod tests {
         let expanded = expand_opus_quad_announcement(&ann);
         assert_eq!(expanded.len(), 1);
         assert_eq!(expanded[0].name, "XDJ-AZ");
+    }
+
+    #[test]
+    fn device_library_plus_false_for_standard_packet() {
+        let pkt = make_keep_alive_packet("CDJ-3000", 2, 1, [0xAA; 6], [10, 0, 0, 1]);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(!ann.is_using_device_library_plus);
+    }
+
+    #[test]
+    fn device_library_plus_true_when_flag_set() {
+        let mut pkt = make_keep_alive_packet("CDJ-3000", 2, 1, [0xAA; 6], [10, 0, 0, 1]);
+        pkt.push(0x01);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(ann.is_using_device_library_plus);
+    }
+
+    #[test]
+    fn device_library_plus_false_when_flag_zero() {
+        let mut pkt = make_keep_alive_packet("CDJ-3000", 2, 1, [0xAA; 6], [10, 0, 0, 1]);
+        pkt.push(0x00);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(!ann.is_using_device_library_plus);
     }
 }

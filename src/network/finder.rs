@@ -5,16 +5,16 @@ use std::time::{Duration, Instant};
 
 use dashmap::DashSet;
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::device::types::DeviceNumber;
 use crate::error::Result;
 use crate::protocol::announce::{
-    expand_opus_quad_announcement, extract_claim_stage2_device_number,
-    extract_defense_device_number, parse_keep_alive, DeviceAnnouncement,
+    DeviceAnnouncement, expand_opus_quad_announcement, extract_claim_stage2_device_number,
+    extract_defense_device_number, parse_keep_alive,
 };
-use crate::protocol::header::{parse_header, PacketType, DISCOVERY_PORT};
+use crate::protocol::header::{DISCOVERY_PORT, PacketType, parse_header};
 
 /// How long before a device is considered gone (no keep-alive received).
 /// This is 1.5× the standard 3-second keep-alive interval.
@@ -106,18 +106,18 @@ impl DeviceFinder {
                                 }
                                 PacketType::DeviceDefense => {
                                     if let Some(dn) = extract_defense_device_number(data) {
-                                        let _ = recv_tx
-                                            .send(FinderEvent::DefenseReceived { device_number: dn });
+                                        let _ = recv_tx.send(FinderEvent::DefenseReceived {
+                                            device_number: dn,
+                                        });
                                     }
                                 }
                                 PacketType::DeviceClaimStage2 => {
                                     if let Some(dn) = extract_claim_stage2_device_number(data) {
                                         if let SocketAddr::V4(v4) = addr {
-                                            let _ =
-                                                recv_tx.send(FinderEvent::ClaimReceived {
-                                                    device_number: dn,
-                                                    source_ip: *v4.ip(),
-                                                });
+                                            let _ = recv_tx.send(FinderEvent::ClaimReceived {
+                                                device_number: dn,
+                                                source_ip: *v4.ip(),
+                                            });
                                         }
                                     }
                                 }
@@ -227,6 +227,7 @@ mod tests {
             peer_count: 0,
             is_opus_quad: false,
             is_xdj_az: false,
+            is_using_device_library_plus: false,
             last_seen: Instant::now(),
         };
 
@@ -246,6 +247,7 @@ mod tests {
             peer_count: 0,
             is_opus_quad: false,
             is_xdj_az: false,
+            is_using_device_library_plus: false,
             last_seen: Instant::now(),
         };
         let event = FinderEvent::DeviceFound(ann);
@@ -265,9 +267,7 @@ mod tests {
         let finder = match DeviceFinder::start().await {
             Ok(f) => f,
             Err(e) => {
-                eprintln!(
-                    "Skipping loopback test: cannot bind to port {DISCOVERY_PORT}: {e}"
-                );
+                eprintln!("Skipping loopback test: cannot bind to port {DISCOVERY_PORT}: {e}");
                 return;
             }
         };
@@ -349,12 +349,7 @@ mod tests {
 
         let mut rx = finder.subscribe();
 
-        let pkt = build_keep_alive(
-            "Ignored",
-            DeviceNumber(9),
-            [0; 6],
-            Ipv4Addr::LOCALHOST,
-        );
+        let pkt = build_keep_alive("Ignored", DeviceNumber(9), [0; 6], Ipv4Addr::LOCALHOST);
         let sender = UdpSocket::bind("0.0.0.0:0").await.unwrap();
         sender
             .send_to(&pkt, ("127.0.0.1", DISCOVERY_PORT))
@@ -363,7 +358,10 @@ mod tests {
 
         // Should time out since the address is ignored
         let result = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
-        assert!(result.is_err(), "Expected timeout — packet should be ignored");
+        assert!(
+            result.is_err(),
+            "Expected timeout — packet should be ignored"
+        );
 
         finder.stop();
     }

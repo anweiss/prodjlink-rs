@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tokio::sync::broadcast;
@@ -6,11 +8,14 @@ use tokio::task::JoinHandle;
 
 use crate::error::Result;
 use crate::protocol::beat::{
+    Beat, ChannelsOnAir, FaderStartEvent, MasterHandoffEvent, PrecisePosition, SyncEvent,
     parse_beat, parse_channels_on_air, parse_fader_start, parse_master_handoff,
-    parse_precise_position, parse_sync, Beat, ChannelsOnAir, FaderStartEvent,
-    MasterHandoffEvent, PrecisePosition, SyncEvent,
+    parse_precise_position, parse_sync,
 };
-use crate::protocol::header::{parse_header_on_port, PacketType, BEAT_PORT};
+use crate::protocol::header::{BEAT_PORT, PacketType, parse_header_on_port};
+
+/// Time window within which an XDJ-XZ is considered visible on the network.
+const XDJ_XZ_ACTIVE_WINDOW: Duration = Duration::from_secs(1);
 
 /// Events emitted by the BeatFinder.
 #[derive(Debug, Clone)]
@@ -29,6 +34,7 @@ pub struct BeatFinder {
     handoff_tx: broadcast::Sender<MasterHandoffEvent>,
     fader_start_tx: broadcast::Sender<FaderStartEvent>,
     recv_task: JoinHandle<()>,
+    last_xdj_xz_seen: Arc<Mutex<Option<Instant>>>,
 }
 
 impl BeatFinder {
@@ -52,6 +58,8 @@ impl BeatFinder {
         let sync_tx_clone = sync_tx.clone();
         let handoff_tx_clone = handoff_tx.clone();
         let fader_start_tx_clone = fader_start_tx.clone();
+        let last_xdj_xz_seen = Arc::new(Mutex::new(None::<Instant>));
+        let xdj_xz_clone = last_xdj_xz_seen.clone();
         let recv_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             loop {
@@ -62,13 +70,15 @@ impl BeatFinder {
                             match ptype {
                                 PacketType::Beat => {
                                     if let Ok(b) = parse_beat(data) {
+                                        if is_xdj_xz_name(&b.name) {
+                                            *xdj_xz_clone.lock().unwrap() = Some(Instant::now());
+                                        }
                                         let _ = recv_tx.send(BeatEvent::NewBeat(b));
                                     }
                                 }
                                 PacketType::PrecisePosition => {
                                     if let Ok(pp) = parse_precise_position(data) {
-                                        let _ =
-                                            recv_tx.send(BeatEvent::PrecisePosition(pp));
+                                        let _ = recv_tx.send(BeatEvent::PrecisePosition(pp));
                                     }
                                 }
                                 PacketType::OnAir => {
@@ -107,6 +117,7 @@ impl BeatFinder {
             handoff_tx,
             fader_start_tx,
             recv_task,
+            last_xdj_xz_seen,
         })
     }
 
@@ -135,10 +146,24 @@ impl BeatFinder {
         self.fader_start_tx.subscribe()
     }
 
+    /// Returns `true` if an XDJ-XZ has sent a beat packet recently enough to
+    /// be considered visible on the Pro DJ Link network.
+    pub fn can_see_xdj_xz_in_pro_dj_link_mode(&self) -> bool {
+        self.last_xdj_xz_seen
+            .lock()
+            .unwrap()
+            .map_or(false, |ts| ts.elapsed() < XDJ_XZ_ACTIVE_WINDOW)
+    }
+
     /// Stop the beat finder.
     pub fn stop(self) {
         self.recv_task.abort();
     }
+}
+
+/// The XDJ-XZ identifies itself as "XDJ-AZ" on the network.
+fn is_xdj_xz_name(name: &str) -> bool {
+    name == "XDJ-XZ" || name == "XDJ-AZ"
 }
 
 #[cfg(test)]
@@ -313,8 +338,7 @@ mod tests {
         let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         sender.send_to(&pkt, local_addr).await.unwrap();
 
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+        let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
         assert!(result.is_err(), "should not have received an event");
 
         finder.stop();
@@ -445,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_receive_fader_start_on_loopback() {
-        use crate::protocol::command::{build_fader_start, FaderAction};
+        use crate::protocol::command::{FaderAction, build_fader_start};
 
         let socket = match UdpSocket::bind("127.0.0.1:0").await {
             Ok(s) => s,
@@ -459,7 +483,12 @@ mod tests {
         let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let pkt = build_fader_start(
             crate::device::types::DeviceNumber(5),
-            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+            [
+                FaderAction::Start,
+                FaderAction::Stop,
+                FaderAction::NoChange,
+                FaderAction::Start,
+            ],
         );
         sender.send_to(&pkt, local_addr).await.unwrap();
 
@@ -502,6 +531,41 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_millis(200), beat_rx.recv()).await;
         assert!(result.is_err(), "sync should not appear on beat channel");
 
+        finder.stop();
+    }
+
+    #[test]
+    fn is_xdj_xz_name_matches() {
+        assert!(is_xdj_xz_name("XDJ-XZ"));
+        assert!(is_xdj_xz_name("XDJ-AZ"));
+        assert!(!is_xdj_xz_name("CDJ-3000"));
+        assert!(!is_xdj_xz_name(""));
+    }
+
+    #[tokio::test]
+    async fn can_see_xdj_xz_initially_false() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let finder = BeatFinder::start_with_socket(sock).unwrap();
+        assert!(!finder.can_see_xdj_xz_in_pro_dj_link_mode());
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn xdj_xz_seen_after_beat() {
+        let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let local_addr = sock.local_addr().unwrap();
+        let finder = BeatFinder::start_with_socket(sock).unwrap();
+        let mut rx = finder.subscribe();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut pkt = make_beat_packet(1, 12800);
+        // Write device name "XDJ-AZ" at offset 0x0b so parse_beat sees it.
+        let name = b"XDJ-AZ";
+        pkt[0x0b..0x0b + name.len()].copy_from_slice(name);
+        sender.send_to(&pkt, local_addr).await.unwrap();
+
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+        assert!(finder.can_see_xdj_xz_in_pro_dj_link_mode());
         finder.stop();
     }
 }

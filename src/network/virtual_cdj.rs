@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::net::UdpSocket;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
 
 use crate::device::settings::PlayerSettings;
@@ -21,7 +21,7 @@ use crate::protocol::announce::{
 use crate::protocol::beat::{build_beat, build_on_air};
 use crate::protocol::command::{self, FaderAction};
 use crate::protocol::header::{BEAT_PORT, DISCOVERY_PORT, MAGIC_HEADER, STATUS_PORT};
-use crate::protocol::status::{build_cdj_status, CdjStatusBuilder, CdjStatusFlags};
+use crate::protocol::status::{CdjStatusBuilder, CdjStatusFlags, build_cdj_status};
 
 /// Interval between keep-alive packets.
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_millis(1500);
@@ -69,6 +69,10 @@ pub struct VirtualCdjConfig {
     pub device_number: DeviceNumber,
     /// Network interface IP to bind to.
     pub interface_address: Ipv4Addr,
+    /// When true, claim a device number in the 1–4 range (like a real CDJ).
+    pub use_standard_player_number: bool,
+    /// Configurable threshold for comparing tempos.
+    pub tempo_epsilon: f64,
 }
 
 impl VirtualCdjConfig {
@@ -80,11 +84,23 @@ impl VirtualCdjConfig {
             name: "prodjlink-rs".to_string(),
             device_number: DeviceNumber(device_number),
             interface_address,
+            use_standard_player_number: false,
+            tempo_epsilon: 0.00001,
         })
     }
 
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
+        self
+    }
+
+    pub fn with_use_standard_player_number(mut self, use_standard: bool) -> Self {
+        self.use_standard_player_number = use_standard;
+        self
+    }
+
+    pub fn with_tempo_epsilon(mut self, epsilon: f64) -> Self {
+        self.tempo_epsilon = epsilon;
         self
     }
 }
@@ -122,6 +138,8 @@ pub struct VirtualCdj {
     status_task: Mutex<Option<JoinHandle<()>>>,
     /// Monotonic packet counter for status packets.
     packet_counter: Arc<AtomicU64>,
+    opus_quad_mode: bool,
+    broadcast_address: Ipv4Addr,
 }
 
 impl VirtualCdj {
@@ -196,6 +214,8 @@ impl VirtualCdj {
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
+            opus_quad_mode: false,
+            broadcast_address: Ipv4Addr::BROADCAST,
         })
     }
 
@@ -209,6 +229,26 @@ impl VirtualCdj {
         &self.config.name
     }
 
+    pub fn use_standard_player_number(&self) -> bool {
+        self.config.use_standard_player_number
+    }
+
+    pub fn tempo_epsilon(&self) -> f64 {
+        self.config.tempo_epsilon
+    }
+
+    pub fn in_opus_quad_compatibility_mode(&self) -> bool {
+        self.opus_quad_mode
+    }
+
+    pub fn local_address(&self) -> Ipv4Addr {
+        self.config.interface_address
+    }
+
+    pub fn broadcast_address(&self) -> Ipv4Addr {
+        self.broadcast_address
+    }
+
     /// Subscribe to incoming command events (fader start, load track).
     pub fn subscribe_commands(&self) -> broadcast::Receiver<CommandEvent> {
         self.command_tx.subscribe()
@@ -216,8 +256,7 @@ impl VirtualCdj {
 
     /// Send a fader start/stop command to a target device.
     pub async fn fader_start(&self, target: DeviceNumber, start: bool) -> Result<()> {
-        let packet =
-            command::build_fader_start_single(self.config.device_number, target, start);
+        let packet = command::build_fader_start_single(self.config.device_number, target, start);
         self.send_command(&packet).await
     }
 
@@ -347,11 +386,7 @@ impl VirtualCdj {
     /// Broadcast an on-air packet indicating which channels are currently
     /// on-air. `channels[0]` is channel 1, etc.
     pub async fn send_on_air_command(&self, channels: &[bool; 4]) -> Result<()> {
-        let packet = build_on_air(
-            &self.config.name,
-            self.config.device_number,
-            channels,
-        );
+        let packet = build_on_air(&self.config.name, self.config.device_number, channels);
         self.send_beat_command(&packet).await
     }
 
@@ -386,8 +421,7 @@ impl VirtualCdj {
 
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(STATUS_BROADCAST_INTERVAL);
-                let broadcast_addr =
-                    SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
+                let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
 
                 loop {
                     interval.tick().await;
@@ -466,10 +500,7 @@ impl VirtualCdj {
         target: DeviceNumber,
         settings: &PlayerSettings,
     ) -> Result<()> {
-        let packet = settings.build_settings_packet(
-            self.config.device_number.0,
-            target.0,
-        );
+        let packet = settings.build_settings_packet(self.config.device_number.0, target.0);
         self.send_command(&packet).await
     }
 
@@ -517,10 +548,7 @@ impl VirtualCdj {
     ///
     /// Runs the claim handshake before starting the keep-alive loop. After
     /// claiming, a background defense task monitors for conflicting claims.
-    pub async fn start_claimed(
-        config: VirtualCdjConfig,
-        finder: &DeviceFinder,
-    ) -> Result<Self> {
+    pub async fn start_claimed(config: VirtualCdjConfig, finder: &DeviceFinder) -> Result<Self> {
         let mac_address = resolve_mac(config.interface_address, config.device_number.0);
 
         let discovery_socket = UdpSocket::bind(("0.0.0.0", 0)).await?;
@@ -600,6 +628,8 @@ impl VirtualCdj {
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
+            opus_quad_mode: false,
+            broadcast_address: Ipv4Addr::BROADCAST,
         })
     }
 
@@ -632,8 +662,8 @@ impl VirtualCdj {
         }
 
         for &device_number in &candidates {
-            let config = VirtualCdjConfig::new(device_number, interface_address)?
-                .with_name(name.clone());
+            let config =
+                VirtualCdjConfig::new(device_number, interface_address)?.with_name(name.clone());
             match Self::start_claimed(config, finder).await {
                 Ok(vcdj) => return Ok(vcdj),
                 Err(ProDjLinkError::DeviceNumberInUse(_)) => continue,
@@ -837,9 +867,7 @@ fn create_reuse_port_socket(port: u16) -> std::io::Result<tokio::net::UdpSocket>
 /// Returns `Some(JoinHandle)` if the socket could be bound, or `None` if
 /// port 50002 is unavailable (the VirtualCdj still works, just without
 /// command reception).
-fn spawn_command_listener(
-    tx: broadcast::Sender<CommandEvent>,
-) -> Option<JoinHandle<()>> {
+fn spawn_command_listener(tx: broadcast::Sender<CommandEvent>) -> Option<JoinHandle<()>> {
     let socket = match create_reuse_port_socket(STATUS_PORT) {
         Ok(s) => Arc::new(s),
         Err(e) => {
@@ -1044,8 +1072,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel::<FinderEvent>(16);
         // Don't send any defense events
         drop(tx);
-        let result =
-            wait_for_defense(&mut rx, Duration::from_millis(50), 7).await;
+        let result = wait_for_defense(&mut rx, Duration::from_millis(50), 7).await;
         // Channel closed before timeout, should return false
         assert!(!result);
     }
@@ -1054,8 +1081,7 @@ mod tests {
     async fn wait_for_defense_detects_matching_defense() {
         let (tx, mut rx) = broadcast::channel::<FinderEvent>(16);
         let _ = tx.send(FinderEvent::DefenseReceived { device_number: 7 });
-        let result =
-            wait_for_defense(&mut rx, Duration::from_millis(500), 7).await;
+        let result = wait_for_defense(&mut rx, Duration::from_millis(500), 7).await;
         assert!(result);
     }
 
@@ -1065,8 +1091,7 @@ mod tests {
         // Send defense for a different number
         let _ = tx.send(FinderEvent::DefenseReceived { device_number: 8 });
         drop(tx); // Close channel so the test terminates
-        let result =
-            wait_for_defense(&mut rx, Duration::from_millis(50), 7).await;
+        let result = wait_for_defense(&mut rx, Duration::from_millis(50), 7).await;
         assert!(!result);
     }
 
@@ -1364,7 +1389,12 @@ mod tests {
         // Build a fader-start packet using the protocol builder, then parse it
         let pkt = command::build_fader_start(
             DeviceNumber(5),
-            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+            [
+                FaderAction::Start,
+                FaderAction::Stop,
+                FaderAction::NoChange,
+                FaderAction::Start,
+            ],
         );
         let event = try_parse_command(&pkt).expect("should parse fader_start");
         match event {
@@ -1591,8 +1621,42 @@ mod tests {
         let cfg = VirtualCdjConfig::new(4, Ipv4Addr::LOCALHOST).unwrap();
         let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
         let settings = PlayerSettings::default();
-        let result = vcdj.send_load_settings_command(DeviceNumber(1), &settings).await;
+        let result = vcdj
+            .send_load_settings_command(DeviceNumber(1), &settings)
+            .await;
         assert!(result.is_ok());
+        vcdj.stop();
+    }
+
+    #[test]
+    fn config_defaults() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        assert!(!cfg.use_standard_player_number);
+        assert!((cfg.tempo_epsilon - 0.00001).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn config_builder_methods() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST)
+            .unwrap()
+            .with_use_standard_player_number(true)
+            .with_tempo_epsilon(0.001);
+        assert!(cfg.use_standard_player_number);
+        assert!((cfg.tempo_epsilon - 0.001).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn vcdj_accessors() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST)
+            .unwrap()
+            .with_use_standard_player_number(true)
+            .with_tempo_epsilon(0.005);
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        assert!(vcdj.use_standard_player_number());
+        assert!((vcdj.tempo_epsilon() - 0.005).abs() < f64::EPSILON);
+        assert!(!vcdj.in_opus_quad_compatibility_mode());
+        assert_eq!(vcdj.local_address(), Ipv4Addr::LOCALHOST);
+        assert_eq!(vcdj.broadcast_address(), Ipv4Addr::BROADCAST);
         vcdj.stop();
     }
 }
