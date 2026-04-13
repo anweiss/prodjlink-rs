@@ -21,7 +21,7 @@ pub use error::{ProDjLinkError, Result};
 
 // Protocol types
 pub use protocol::announce::DeviceAnnouncement;
-pub use protocol::beat::{Beat, PrecisePosition};
+pub use protocol::beat::{Beat, ChannelsOnAir, PrecisePosition};
 pub use protocol::status::{CdjStatus, DeviceUpdate, MixerStatus};
 
 // Network services
@@ -164,6 +164,11 @@ impl ProDjLink {
     /// Subscribe to beat events from all players.
     pub fn subscribe_beats(&self) -> tokio::sync::broadcast::Receiver<BeatEvent> {
         self.beat_finder.subscribe()
+    }
+
+    /// Subscribe to channels-on-air updates from mixers.
+    pub fn subscribe_on_air(&self) -> tokio::sync::broadcast::Receiver<ChannelsOnAir> {
+        self.beat_finder.subscribe_on_air()
     }
 
     // --- Status ---

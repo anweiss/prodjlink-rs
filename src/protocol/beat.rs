@@ -210,6 +210,73 @@ pub fn parse_precise_position(data: &[u8]) -> Result<PrecisePosition> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Channels-on-air packet (type 0x03, port 50001)
+// ---------------------------------------------------------------------------
+
+/// Minimum packet length for a channels-on-air message (4-channel mixer).
+/// Header (11) + name (20) + padding (2) + device_number (1) + padding (2) + 4 channel flags.
+const CHANNELS_ON_AIR_MIN_LENGTH: usize = 0x28; // 0x24 + 4
+
+/// Minimum packet length for a 6-channel mixer (DJM-V10).
+const CHANNELS_ON_AIR_6CH_LENGTH: usize = 0x2a; // 0x24 + 6
+
+/// Offset where per-channel on-air flag bytes begin.
+const CHANNEL_FLAGS_OFFSET: usize = 0x24;
+
+/// Channels-on-air status from a mixer.
+#[derive(Debug, Clone)]
+pub struct ChannelsOnAir {
+    /// Device name of the mixer sending the update.
+    pub name: String,
+    /// Device number of the mixer.
+    pub device_number: DeviceNumber,
+    /// Which channels are currently on-air (fader up).
+    /// Key is channel number (1-based), value is `true` if on-air.
+    pub channels: std::collections::HashMap<u8, bool>,
+}
+
+/// Parse a channels-on-air packet (type 0x03) from raw bytes.
+///
+/// Mixers broadcast this on port 50001 to indicate which channel faders are up.
+/// Standard 4-channel mixers send flags for channels 1–4; the DJM-V10 adds
+/// channels 5–6.
+pub fn parse_channels_on_air(data: &[u8]) -> Result<ChannelsOnAir> {
+    let pkt_type = parse_header(data)?;
+    if pkt_type != PacketType::OnAir {
+        return Err(ProDjLinkError::Parse(format!(
+            "expected OnAir (0x03) packet, got {:?}",
+            pkt_type
+        )));
+    }
+
+    if data.len() < CHANNELS_ON_AIR_MIN_LENGTH {
+        return Err(ProDjLinkError::PacketTooShort {
+            expected: CHANNELS_ON_AIR_MIN_LENGTH,
+            actual: data.len(),
+        });
+    }
+
+    let name = read_device_name(data, DEVICE_NAME_OFFSET, DEVICE_NAME_MAX_LEN);
+    let device_number = DeviceNumber::from(data[DEVICE_NUMBER_OFFSET]);
+
+    // Determine how many channel flags are present (4 or 6).
+    let available = data.len() - CHANNEL_FLAGS_OFFSET;
+    let num_channels: u8 = if available >= 6 { 6 } else { 4 };
+
+    let mut channels = std::collections::HashMap::new();
+    for i in 0..num_channels {
+        let flag = data[CHANNEL_FLAGS_OFFSET + i as usize];
+        channels.insert(i + 1, flag != 0);
+    }
+
+    Ok(ChannelsOnAir {
+        name,
+        device_number,
+        channels,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +564,100 @@ mod tests {
         pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
         pkt[0x0a] = 0x28;
         let err = parse_precise_position(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::Parse(_)));
+    }
+
+    // -- channels-on-air tests --
+
+    /// Build a channels-on-air packet with the given channel flags.
+    fn make_on_air_packet(name: &str, device_num: u8, flags: &[u8]) -> Vec<u8> {
+        let total_len = CHANNEL_FLAGS_OFFSET + flags.len();
+        let mut pkt = vec![0u8; total_len];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x03; // OnAir type
+
+        let name_bytes = name.as_bytes();
+        let copy_len = name_bytes.len().min(DEVICE_NAME_MAX_LEN);
+        pkt[DEVICE_NAME_OFFSET..DEVICE_NAME_OFFSET + copy_len]
+            .copy_from_slice(&name_bytes[..copy_len]);
+
+        pkt[DEVICE_NUMBER_OFFSET] = device_num;
+        pkt[CHANNEL_FLAGS_OFFSET..CHANNEL_FLAGS_OFFSET + flags.len()]
+            .copy_from_slice(flags);
+        pkt
+    }
+
+    #[test]
+    fn parse_on_air_4ch_partial() {
+        // Channels 1 and 3 on-air, 2 and 4 off.
+        let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0x01, 0x00, 0x01, 0x00]);
+        let oa = parse_channels_on_air(&pkt).unwrap();
+
+        assert_eq!(oa.name, "DJM-900NXS2");
+        assert_eq!(oa.device_number, DeviceNumber(33));
+        assert_eq!(oa.channels.len(), 4);
+        assert_eq!(oa.channels[&1], true);
+        assert_eq!(oa.channels[&2], false);
+        assert_eq!(oa.channels[&3], true);
+        assert_eq!(oa.channels[&4], false);
+    }
+
+    #[test]
+    fn parse_on_air_6ch() {
+        // DJM-V10: all 6 channels, mixed state.
+        let pkt = make_on_air_packet("DJM-V10", 33, &[0x01, 0x01, 0x00, 0x00, 0x01, 0x00]);
+        let oa = parse_channels_on_air(&pkt).unwrap();
+
+        assert_eq!(oa.channels.len(), 6);
+        assert_eq!(oa.channels[&1], true);
+        assert_eq!(oa.channels[&2], true);
+        assert_eq!(oa.channels[&3], false);
+        assert_eq!(oa.channels[&4], false);
+        assert_eq!(oa.channels[&5], true);
+        assert_eq!(oa.channels[&6], false);
+    }
+
+    #[test]
+    fn parse_on_air_all_off() {
+        let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0x00, 0x00, 0x00, 0x00]);
+        let oa = parse_channels_on_air(&pkt).unwrap();
+        assert!(oa.channels.values().all(|&v| !v));
+    }
+
+    #[test]
+    fn parse_on_air_all_on() {
+        let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0x01, 0x01, 0x01, 0x01]);
+        let oa = parse_channels_on_air(&pkt).unwrap();
+        assert!(oa.channels.values().all(|&v| v));
+    }
+
+    #[test]
+    fn parse_on_air_nonzero_flag_values() {
+        // Any non-zero byte counts as on-air.
+        let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0xFF, 0x00, 0x42, 0x00]);
+        let oa = parse_channels_on_air(&pkt).unwrap();
+        assert_eq!(oa.channels[&1], true);
+        assert_eq!(oa.channels[&2], false);
+        assert_eq!(oa.channels[&3], true);
+        assert_eq!(oa.channels[&4], false);
+    }
+
+    #[test]
+    fn parse_on_air_too_short() {
+        // Packet shorter than minimum (0x28 bytes for 4 channels).
+        let mut pkt = vec![0u8; 0x25]; // too short for any channel flags
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x03;
+        let err = parse_channels_on_air(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::PacketTooShort { .. }));
+    }
+
+    #[test]
+    fn parse_on_air_wrong_type() {
+        let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0x01, 0x01, 0x01, 0x01]);
+        let mut modified = pkt;
+        modified[0x0a] = 0x28; // Beat type instead
+        let err = parse_channels_on_air(&modified).unwrap_err();
         assert!(matches!(err, ProDjLinkError::Parse(_)));
     }
 }
