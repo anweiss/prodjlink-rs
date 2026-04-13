@@ -19,6 +19,7 @@ sha1 = "0.10"
 tokio-test = "0.4"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+crossterm = "0.28"
 
 [[example]]
 name = "virtual-cdj3000"

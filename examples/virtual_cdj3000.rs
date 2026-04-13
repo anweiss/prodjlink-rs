@@ -10,17 +10,21 @@
 //! cargo run --example virtual-cdj3000 -- --device-number 1 --bpm 128.0
 //! ```
 //!
-//! Press Ctrl+C to stop. The simulator will deannounce itself on shutdown.
+//! All keys are instant (no Enter required). Press `q` or Ctrl+C to stop.
 
+use std::fmt::Write as _;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{self, ClearType};
+use crossterm::{cursor, execute};
 use tokio::net::UdpSocket;
 use tokio::sync::Notify;
-use tracing::{debug, info, warn};
 
 use prodjlink_rs::device::types::{Bpm, DeviceNumber, Pitch};
 use prodjlink_rs::protocol::announce::build_keep_alive;
@@ -54,8 +58,10 @@ struct Args {
     interface: Ipv4Addr,
 }
 
-/// Shared mutable state for the virtual CDJ.
+// ── Shared state ────────────────────────────────────────────────────────────
+
 struct CdjState {
+    device_number: u8,
     bpm: std::sync::atomic::AtomicU64,
     playing: AtomicBool,
     master: AtomicBool,
@@ -63,11 +69,22 @@ struct CdjState {
     beat_within_bar: AtomicU8,
     packet_counter: AtomicU32,
     beat_number: AtomicU32,
+    /// Rolling log of recent events (newest first). Protected by a std Mutex
+    /// because we only hold it briefly from sync contexts.
+    event_log: std::sync::Mutex<Vec<LogEntry>>,
 }
 
+struct LogEntry {
+    time: Instant,
+    message: String,
+}
+
+const MAX_LOG_ENTRIES: usize = 8;
+
 impl CdjState {
-    fn new(bpm: f64, playing: bool, master: bool) -> Self {
+    fn new(device_number: u8, bpm: f64, playing: bool, master: bool) -> Self {
         Self {
+            device_number,
             bpm: std::sync::atomic::AtomicU64::new(bpm.to_bits()),
             playing: AtomicBool::new(playing),
             master: AtomicBool::new(master),
@@ -75,6 +92,7 @@ impl CdjState {
             beat_within_bar: AtomicU8::new(1),
             packet_counter: AtomicU32::new(0),
             beat_number: AtomicU32::new(1),
+            event_log: std::sync::Mutex::new(Vec::new()),
         }
     }
 
@@ -97,17 +115,85 @@ impl CdjState {
     fn next_packet_number(&self) -> u32 {
         self.packet_counter.fetch_add(1, Ordering::Relaxed)
     }
+
+    fn push_event(&self, msg: String) {
+        if let Ok(mut log) = self.event_log.lock() {
+            log.insert(0, LogEntry { time: Instant::now(), message: msg });
+            log.truncate(MAX_LOG_ENTRIES);
+        }
+    }
 }
+
+// ── Beat phase bar ──────────────────────────────────────────────────────────
+
+fn beat_phase_bar(beat: u8) -> String {
+    let mut bar = String::with_capacity(9);
+    bar.push('[');
+    for i in 1..=4u8 {
+        if i == beat { bar.push('█'); } else { bar.push('░'); }
+    }
+    bar.push(']');
+    bar
+}
+
+// ── Render ──────────────────────────────────────────────────────────────────
+
+fn render_display(state: &CdjState, start: Instant) -> String {
+    let bpm = state.bpm();
+    let playing = state.playing.load(Ordering::Relaxed);
+    let master = state.master.load(Ordering::Relaxed);
+    let synced = state.synced.load(Ordering::Relaxed);
+    let beat = state.beat_within_bar.load(Ordering::Relaxed);
+    let beat_num = state.beat_number.load(Ordering::Relaxed);
+    let elapsed = start.elapsed().as_secs();
+
+    let play_icon = if playing { "▶" } else { "⏸" };
+    let master_str = if master { "MASTER" } else { "      " };
+    let sync_str = if synced { "SYNC" } else { "    " };
+
+    let mut out = String::with_capacity(512);
+
+    // Header
+    let _ = writeln!(out, "┌─────────────────────────────────────────────────┐");
+    let _ = writeln!(out, "│  CDJ-3000  ·  Player {}  ·  {:>4}s uptime         │",
+        state.device_number, elapsed);
+    let _ = writeln!(out, "├─────────────────────────────────────────────────┤");
+
+    // Main status
+    let _ = writeln!(out, "│                                                 │");
+    let _ = writeln!(out, "│   {play_icon}  {bpm:>6.1} BPM   {master_str}  {sync_str}            │");
+    let _ = writeln!(out, "│                                                 │");
+    let _ = writeln!(out, "│   Beat: {}/4  {}  #{:<8}          │",
+        beat, beat_phase_bar(beat), beat_num);
+    let _ = writeln!(out, "│                                                 │");
+    let _ = writeln!(out, "├─────────────────────────────────────────────────┤");
+
+    // Controls
+    let _ = writeln!(out, "│  ↑/↓ BPM ±1  ←/→ ±0.1  p play  m master       │");
+    let _ = writeln!(out, "│  s sync  1-9 BPM preset (×20)  q quit          │");
+    let _ = writeln!(out, "├─────────────────────────────────────────────────┤");
+
+    // Event log
+    if let Ok(log) = state.event_log.lock() {
+        if log.is_empty() {
+            let _ = writeln!(out, "│  (no events yet)                                │");
+        }
+        let now = Instant::now();
+        for entry in log.iter().take(6) {
+            let age = now.duration_since(entry.time).as_secs();
+            let dim = if age > 5 { " ·" } else { " ←" };
+            let _ = writeln!(out, "│ {dim} {:<45.45} │", entry.message);
+        }
+    }
+
+    let _ = writeln!(out, "└─────────────────────────────────────────────────┘");
+    out
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let args = Args::parse();
 
     if args.device_number == 0 || args.device_number > 6 {
@@ -119,25 +205,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device_number = DeviceNumber(args.device_number);
     let mac: [u8; 6] = [0x02, 0xCD, 0x30, 0x00, 0x00, args.device_number];
 
-    let state = Arc::new(CdjState::new(args.bpm, args.playing, args.master));
+    let state = Arc::new(CdjState::new(args.device_number, args.bpm, args.playing, args.master));
     let shutdown = Arc::new(Notify::new());
+    let start_time = Instant::now();
 
-    info!(
-        name = device_name,
-        number = args.device_number,
-        bpm = args.bpm,
-        playing = args.playing,
-        master = args.master,
-        "Starting virtual CDJ-3000"
-    );
+    // Enable raw mode for instant key input
+    terminal::enable_raw_mode()?;
+    // Hide cursor
+    let mut stdout = std::io::stdout();
+    execute!(stdout, cursor::Hide)?;
 
     // Bind sockets
     let discovery_socket = Arc::new(bind_broadcast_socket(0).await?);
     let beat_socket = Arc::new(bind_broadcast_socket(0).await?);
     let status_socket = Arc::new(bind_broadcast_socket(0).await?);
-
-    // Bind a listener on the status port to receive incoming commands
     let cmd_socket = Arc::new(bind_reuse_socket(STATUS_PORT)?);
+
+    state.push_event(format!("Started as Player {} @ {:.1} BPM", args.device_number, args.bpm));
 
     // Spawn: keep-alive loop (port 50000, every 1.5s)
     let ka_shutdown = shutdown.clone();
@@ -150,7 +234,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ = interval.tick() => {
                     let pkt = build_keep_alive(device_name, device_number, mac, args.interface);
                     let _ = ka_socket.send_to(&pkt, dest).await;
-                    debug!("keep-alive sent");
                 }
                 _ = ka_shutdown.notified() => break,
             }
@@ -183,7 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         bpm_sync: false,
                     };
                     let builder = CdjStatusBuilder {
-                        device_name: device_name.to_string(),
+                        device_name: "CDJ-3000".to_string(),
                         device_number,
                         flags,
                         bpm: Bpm(bpm),
@@ -222,18 +305,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let beat_within_bar = bt_state.next_beat();
                     let pkt = build_beat(
-                        device_name,
+                        "CDJ-3000",
                         device_number,
                         Bpm(bpm),
-                        0x100000, // normal pitch
+                        0x100000,
                         beat_within_bar,
                     );
                     let _ = bt_socket.send_to(&pkt, dest).await;
-                    debug!(
-                        bpm,
-                        beat = beat_within_bar,
-                        "beat sent"
-                    );
                 }
                 _ = bt_shutdown.notified() => break,
             }
@@ -243,19 +321,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn: command listener (incoming packets on port 50002)
     let cmd_shutdown = shutdown.clone();
     let cmd_state = state.clone();
+    let cmd_device_number = args.device_number;
     let cmd_handle = tokio::spawn(async move {
         let mut buf = [0u8; 4096];
         loop {
             tokio::select! {
                 result = cmd_socket.recv_from(&mut buf) => {
                     match result {
-                        Ok((len, src)) => {
-                            handle_incoming_command(&buf[..len], src, &cmd_state);
+                        Ok((len, _src)) => {
+                            handle_incoming_command(&buf[..len], cmd_device_number, &cmd_state);
                         }
-                        Err(e) => {
-                            warn!(error = %e, "command listener error");
-                            break;
-                        }
+                        Err(_) => break,
                     }
                 }
                 _ = cmd_shutdown.notified() => break,
@@ -263,126 +339,139 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Interactive console: BPM changes, play/pause, master toggle
-    let console_shutdown = shutdown.clone();
-    let console_state = state.clone();
-    let console_handle = tokio::spawn(async move {
-        print_help();
-        let stdin = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(tokio::io::stdin()));
-        tokio::pin!(stdin);
-        loop {
-            tokio::select! {
-                line = stdin.next_line() => {
-                    match line {
-                        Ok(Some(input)) => {
-                            if !handle_console_input(&input, &console_state) {
-                                console_shutdown.notify_waiters();
-                                break;
-                            }
-                        }
-                        Ok(None) | Err(_) => break,
-                    }
-                }
-                _ = console_shutdown.notified() => break,
-            }
-        }
-    });
-
-    // Wait for Ctrl+C or console quit
+    // Spawn: Ctrl+C handler
     let sig_shutdown = shutdown.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
-        info!("Ctrl+C received, shutting down...");
         sig_shutdown.notify_waiters();
     });
 
-    // Wait for shutdown
-    shutdown.notified().await;
-    // Give tasks a moment to exit
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Main loop: render display + read keys (non-blocking)
+    let ui_state = state.clone();
+    let ui_shutdown = shutdown.clone();
+    let ui_handle = tokio::task::spawn_blocking(move || {
+        let mut last_render = Instant::now() - Duration::from_secs(1);
+        loop {
+            // Check for shutdown
+            // (Notify doesn't have try_wait, so we check a flag via the display interval)
 
+            // Render at ~10 Hz
+            if last_render.elapsed() >= Duration::from_millis(100) {
+                let display = render_display(&ui_state, start_time);
+                let mut stdout = std::io::stdout();
+                let _ = execute!(stdout, cursor::MoveTo(0, 0), terminal::Clear(ClearType::All));
+                let _ = stdout.write_all(display.as_bytes());
+                let _ = stdout.flush();
+                last_render = Instant::now();
+            }
+
+            // Poll for key events (50ms timeout keeps render responsive)
+            if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+                if let Ok(Event::Key(KeyEvent { code, modifiers, kind, .. })) = event::read() {
+                    // Only handle Press events (avoid double-fire on Release)
+                    if kind != KeyEventKind::Press {
+                        continue;
+                    }
+
+                    // Ctrl+C
+                    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                        break;
+                    }
+
+                    match code {
+                        KeyCode::Char('q') => break,
+
+                        KeyCode::Char('p') => {
+                            let was = ui_state.playing.load(Ordering::Relaxed);
+                            ui_state.playing.store(!was, Ordering::Relaxed);
+                            ui_state.push_event(if !was {
+                                "▶ Playing".into()
+                            } else {
+                                "⏸ Paused".into()
+                            });
+                        }
+
+                        KeyCode::Char('m') => {
+                            let was = ui_state.master.load(Ordering::Relaxed);
+                            ui_state.master.store(!was, Ordering::Relaxed);
+                            ui_state.push_event(if !was {
+                                "★ Master ON".into()
+                            } else {
+                                "☆ Master OFF".into()
+                            });
+                        }
+
+                        KeyCode::Char('s') => {
+                            let was = ui_state.synced.load(Ordering::Relaxed);
+                            ui_state.synced.store(!was, Ordering::Relaxed);
+                            ui_state.push_event(if !was {
+                                "⟳ Sync ON".into()
+                            } else {
+                                "⟳ Sync OFF".into()
+                            });
+                        }
+
+                        // Arrow keys: fine BPM adjustment
+                        KeyCode::Up => {
+                            let new_bpm = (ui_state.bpm() + 1.0).min(300.0);
+                            ui_state.set_bpm(new_bpm);
+                            ui_state.push_event(format!("BPM → {new_bpm:.1}"));
+                        }
+                        KeyCode::Down => {
+                            let new_bpm = (ui_state.bpm() - 1.0).max(20.0);
+                            ui_state.set_bpm(new_bpm);
+                            ui_state.push_event(format!("BPM → {new_bpm:.1}"));
+                        }
+                        KeyCode::Right => {
+                            let new_bpm = (ui_state.bpm() + 0.1).min(300.0);
+                            ui_state.set_bpm(new_bpm);
+                            ui_state.push_event(format!("BPM → {new_bpm:.1}"));
+                        }
+                        KeyCode::Left => {
+                            let new_bpm = (ui_state.bpm() - 0.1).max(20.0);
+                            ui_state.set_bpm(new_bpm);
+                            ui_state.push_event(format!("BPM → {new_bpm:.1}"));
+                        }
+
+                        // Number keys: BPM presets (1=80, 2=100, 3=120, ..., 9=240)
+                        KeyCode::Char(c @ '1'..='9') => {
+                            let n = (c as u8 - b'0') as f64;
+                            let preset = 60.0 + n * 20.0;
+                            ui_state.set_bpm(preset);
+                            ui_state.push_event(format!("BPM preset → {preset:.0}"));
+                        }
+
+                        _ => {}
+                    }
+                }
+            }
+        }
+        ui_shutdown.notify_waiters();
+    });
+
+    // Wait for UI task to exit (triggered by key press or Ctrl+C)
+    let _ = ui_handle.await;
+
+    // Clean up terminal
+    let mut stdout = std::io::stdout();
+    let _ = execute!(stdout, cursor::Show, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0));
+    terminal::disable_raw_mode()?;
+
+    eprintln!("Virtual CDJ-3000 stopped.");
+
+    // Abort background tasks
     ka_handle.abort();
     st_handle.abort();
     bt_handle.abort();
     cmd_handle.abort();
-    console_handle.abort();
 
-    info!("Virtual CDJ-3000 stopped");
     Ok(())
 }
 
-fn print_help() {
-    eprintln!();
-    eprintln!("╔══════════════════════════════════════════╗");
-    eprintln!("║       Virtual CDJ-3000 Simulator         ║");
-    eprintln!("╠══════════════════════════════════════════╣");
-    eprintln!("║  Commands:                               ║");
-    eprintln!("║    <number>  — set BPM (e.g. 135.5)      ║");
-    eprintln!("║    p         — toggle play/pause          ║");
-    eprintln!("║    m         — toggle master               ║");
-    eprintln!("║    s         — toggle sync                 ║");
-    eprintln!("║    i         — show current state          ║");
-    eprintln!("║    q         — quit                        ║");
-    eprintln!("║    h         — show this help              ║");
-    eprintln!("╚══════════════════════════════════════════╝");
-    eprintln!();
-}
+// ── Command handling ────────────────────────────────────────────────────────
 
-fn handle_console_input(input: &str, state: &CdjState) -> bool {
-    let input = input.trim();
-    if input.is_empty() {
-        return true;
-    }
-
-    match input {
-        "q" | "quit" | "exit" => return false,
-        "p" | "play" => {
-            let was = state.playing.load(Ordering::Relaxed);
-            state.playing.store(!was, Ordering::Relaxed);
-            info!(playing = !was, "toggled play state");
-        }
-        "m" | "master" => {
-            let was = state.master.load(Ordering::Relaxed);
-            state.master.store(!was, Ordering::Relaxed);
-            info!(master = !was, "toggled master state");
-        }
-        "s" | "sync" => {
-            let was = state.synced.load(Ordering::Relaxed);
-            state.synced.store(!was, Ordering::Relaxed);
-            info!(synced = !was, "toggled sync state");
-        }
-        "i" | "info" | "status" => {
-            let bpm = state.bpm();
-            let playing = state.playing.load(Ordering::Relaxed);
-            let master = state.master.load(Ordering::Relaxed);
-            let synced = state.synced.load(Ordering::Relaxed);
-            let beat = state.beat_within_bar.load(Ordering::Relaxed);
-            eprintln!(
-                "  BPM: {bpm:.1} | Playing: {playing} | Master: {master} | Sync: {synced} | Beat: {beat}/4"
-            );
-        }
-        "h" | "help" => print_help(),
-        other => {
-            if let Ok(bpm) = other.parse::<f64>() {
-                if bpm > 0.0 && bpm < 300.0 {
-                    state.set_bpm(bpm);
-                    info!(bpm, "BPM changed");
-                } else {
-                    eprintln!("  BPM must be between 0 and 300");
-                }
-            } else {
-                eprintln!("  Unknown command: {other} (type 'h' for help)");
-            }
-        }
-    }
-    true
-}
-
-fn handle_incoming_command(data: &[u8], src: std::net::SocketAddr, state: &CdjState) {
-    if data.len() < 11 {
-        return;
-    }
-    if data[..10] != MAGIC_HEADER {
+fn handle_incoming_command(data: &[u8], our_device: u8, state: &CdjState) {
+    if data.len() < 11 || data[..10] != MAGIC_HEADER {
         return;
     }
 
@@ -399,33 +488,21 @@ fn handle_incoming_command(data: &[u8], src: std::net::SocketAddr, state: &CdjSt
                 byte_to_fader(data[0x26]),
                 byte_to_fader(data[0x27]),
             ];
-            info!(
-                from = source,
-                ch1 = ?channels[0],
-                ch2 = ?channels[1],
-                ch3 = ?channels[2],
-                ch4 = ?channels[3],
-                "← Received fader start command"
-            );
 
-            // Apply to our channel if targeted
-            let our_ch = state.beat_within_bar.load(Ordering::Relaxed); // reuse for device_number
-            // device_number is not stored in state, but we check by index
-            for (i, action) in channels.iter().enumerate() {
-                match action {
+            // Only react to the action targeting our channel (1-indexed)
+            if our_device >= 1 && our_device <= 4 {
+                match channels[(our_device - 1) as usize] {
                     FaderAction::Start => {
                         state.playing.store(true, Ordering::Relaxed);
-                        info!(channel = i + 1, "▶ Started playing (fader start)");
+                        state.push_event(format!("← Fader START from device {source}"));
                     }
                     FaderAction::Stop => {
                         state.playing.store(false, Ordering::Relaxed);
-                        info!(channel = i + 1, "⏸ Stopped playing (fader stop)");
+                        state.push_event(format!("← Fader STOP from device {source}"));
                     }
                     FaderAction::NoChange => {}
                 }
             }
-            // Suppress unused variable
-            let _ = our_ch;
         }
         // Load track (0x19)
         0x19 => {
@@ -434,18 +511,9 @@ fn handle_incoming_command(data: &[u8], src: std::net::SocketAddr, state: &CdjSt
             }
             let source = data[0x21];
             let rb_id = u32::from_be_bytes([data[0x2c], data[0x2d], data[0x2e], data[0x2f]]);
-            info!(
-                from = source,
-                rekordbox_id = rb_id,
-                %src,
-                "← Received load track command"
-            );
+            state.push_event(format!("← Load track #{rb_id} from device {source}"));
         }
-        // Sync command (0x2a) — arrives on beat port but we listen on status
-        // Master command (0x26) — arrives on beat port
-        other => {
-            debug!(packet_type = other, len = data.len(), "← Unknown command type");
-        }
+        _ => {}
     }
 }
 
@@ -456,6 +524,8 @@ fn byte_to_fader(b: u8) -> FaderAction {
         _ => FaderAction::NoChange,
     }
 }
+
+// ── Socket helpers ──────────────────────────────────────────────────────────
 
 async fn bind_broadcast_socket(port: u16) -> std::io::Result<UdpSocket> {
     let socket = UdpSocket::bind(format!("0.0.0.0:{port}")).await?;
