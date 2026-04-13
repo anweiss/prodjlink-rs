@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,8 +9,11 @@ use tokio::task::JoinHandle;
 
 use crate::device::types::DeviceNumber;
 use crate::error::Result;
-use crate::protocol::announce::{parse_keep_alive, DeviceAnnouncement};
-use crate::protocol::header::DISCOVERY_PORT;
+use crate::protocol::announce::{
+    extract_claim_stage2_device_number, extract_defense_device_number, parse_keep_alive,
+    DeviceAnnouncement,
+};
+use crate::protocol::header::{parse_header, PacketType, DISCOVERY_PORT};
 
 /// How long before a device is considered gone (no keep-alive received).
 const DEVICE_EXPIRY: Duration = Duration::from_secs(10);
@@ -26,6 +30,15 @@ pub enum FinderEvent {
     DeviceUpdated(DeviceAnnouncement),
     /// A device has not been seen recently and is considered gone.
     DeviceLost(DeviceAnnouncement),
+    /// A defense packet (type 0x08) was received — another device is asserting
+    /// ownership of the given device number.
+    DefenseReceived { device_number: u8 },
+    /// A stage-2 claim packet (type 0x02) was received — another device is
+    /// trying to claim the given device number from the given source IP.
+    ClaimReceived {
+        device_number: u8,
+        source_ip: Ipv4Addr,
+    },
 }
 
 /// Async service that discovers Pioneer DJ Link devices on the local network.
@@ -57,18 +70,43 @@ impl DeviceFinder {
             let mut buf = [0u8; 2048];
             loop {
                 match recv_socket.recv_from(&mut buf).await {
-                    Ok((len, _addr)) => {
-                        if let Ok(announcement) = parse_keep_alive(&buf[..len]) {
-                            let key = announcement.number.0;
-                            let mut map = recv_devices.write().await;
-                            let is_new = !map.contains_key(&key);
-                            map.insert(key, announcement.clone());
-                            let event = if is_new {
-                                FinderEvent::DeviceFound(announcement)
-                            } else {
-                                FinderEvent::DeviceUpdated(announcement)
-                            };
-                            let _ = recv_tx.send(event);
+                    Ok((len, addr)) => {
+                        let data = &buf[..len];
+                        if let Ok(pkt_type) = parse_header(data) {
+                            match pkt_type {
+                                PacketType::DeviceKeepAlive => {
+                                    if let Ok(announcement) = parse_keep_alive(data) {
+                                        let key = announcement.number.0;
+                                        let mut map = recv_devices.write().await;
+                                        let is_new = !map.contains_key(&key);
+                                        map.insert(key, announcement.clone());
+                                        let event = if is_new {
+                                            FinderEvent::DeviceFound(announcement)
+                                        } else {
+                                            FinderEvent::DeviceUpdated(announcement)
+                                        };
+                                        let _ = recv_tx.send(event);
+                                    }
+                                }
+                                PacketType::DeviceDefense => {
+                                    if let Some(dn) = extract_defense_device_number(data) {
+                                        let _ = recv_tx
+                                            .send(FinderEvent::DefenseReceived { device_number: dn });
+                                    }
+                                }
+                                PacketType::DeviceClaimStage2 => {
+                                    if let Some(dn) = extract_claim_stage2_device_number(data) {
+                                        if let SocketAddr::V4(v4) = addr {
+                                            let _ =
+                                                recv_tx.send(FinderEvent::ClaimReceived {
+                                                    device_number: dn,
+                                                    source_ip: *v4.ip(),
+                                                });
+                                        }
+                                    }
+                                }
+                                _ => {} // Ignore other packet types on the discovery port
+                            }
                         }
                     }
                     Err(_) => break,

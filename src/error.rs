@@ -46,6 +46,14 @@ pub enum ProDjLinkError {
     /// The broadcast channel has been closed.
     #[error("broadcast channel closed")]
     ChannelClosed,
+
+    /// The device number claim was rejected by another device on the network.
+    #[error("device number {0} is already in use on the network")]
+    DeviceNumberInUse(u8),
+
+    /// No available device numbers could be found in the allowed range.
+    #[error("no available device numbers found in the allowed range")]
+    NoAvailableDeviceNumber,
 }
 
 /// Convenience result type for Pro DJ Link operations.

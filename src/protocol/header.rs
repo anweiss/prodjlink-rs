@@ -28,6 +28,8 @@ pub enum PacketType {
     DeviceClaimStage3,
     /// Device keep-alive announcement (0x06 on port 50000)
     DeviceKeepAlive,
+    /// Device number defense packet (0x08 on port 50000)
+    DeviceDefense,
     /// CDJ status update (0x0a on port 50002)
     CdjStatus,
     /// Mixer status update (0x29 on port 50002)
@@ -59,6 +61,7 @@ impl From<u8> for PacketType {
             0x02 => PacketType::DeviceClaimStage2,
             0x04 => PacketType::DeviceClaimStage3,
             0x06 => PacketType::DeviceKeepAlive,
+            0x08 => PacketType::DeviceDefense,
             0x0a => PacketType::DeviceHello,
             0x0b => PacketType::PrecisePosition,
             0x03 => PacketType::OnAir,

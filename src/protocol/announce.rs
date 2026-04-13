@@ -22,6 +22,13 @@ const DEVICE_TYPE_MIRROR_OFFSET: usize = 0x34;
 /// Total size of a keep-alive packet we build.
 const KEEP_ALIVE_PACKET_SIZE: usize = 0x36;
 
+// === Claim / Defense Packet Sizes ===
+const HELLO_PACKET_SIZE: usize = 0x26;
+const CLAIM_STAGE1_PACKET_SIZE: usize = 0x2c;
+const CLAIM_STAGE2_PACKET_SIZE: usize = 0x32;
+const CLAIM_STAGE3_PACKET_SIZE: usize = 0x26;
+const DEFENSE_PACKET_SIZE: usize = 0x29;
+
 /// A device announcement received on the discovery port.
 #[derive(Debug, Clone)]
 pub struct DeviceAnnouncement {
@@ -128,6 +135,162 @@ pub fn build_keep_alive(
     pkt[IP_OFFSET..IP_OFFSET + 4].copy_from_slice(&octets);
 
     pkt
+}
+
+// ---------------------------------------------------------------------------
+// Claim & Defense Packet Builders
+// ---------------------------------------------------------------------------
+
+/// Build a CDJ-3000-compatible initial announcement packet (type `0x0a`).
+///
+/// Broadcast three times at 300 ms intervals when a virtual CDJ comes online.
+pub fn build_device_hello(name: &str) -> Vec<u8> {
+    let mut pkt = vec![0u8; HELLO_PACKET_SIZE];
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    pkt[PACKET_TYPE_OFFSET] = 0x0a;
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_MAX_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[0x20] = 0x01;
+    pkt[0x21] = 0x04; // CDJ-3000 compatible structure type
+    let len_bytes = (HELLO_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
+    pkt[0x24] = 0x01; // device type: CDJ
+    pkt[0x25] = 0x40; // CDJ-3000 compatibility marker
+
+    pkt
+}
+
+/// Build a first-stage device number claim packet (type `0x00`).
+///
+/// `counter` should be 1, 2, or 3 for the three packets in the series.
+pub fn build_claim_stage1(name: &str, mac: [u8; 6], counter: u8) -> Vec<u8> {
+    let mut pkt = vec![0u8; CLAIM_STAGE1_PACKET_SIZE];
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    pkt[PACKET_TYPE_OFFSET] = 0x00;
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_MAX_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[0x20] = 0x01;
+    pkt[0x21] = 0x03; // CDJ-3000 compatible
+    let len_bytes = (CLAIM_STAGE1_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
+    pkt[0x24] = counter;
+    pkt[0x25] = 0x01; // device type: CDJ
+    pkt[0x26..0x2c].copy_from_slice(&mac);
+
+    pkt
+}
+
+/// Build a second-stage device number claim packet (type `0x02`).
+///
+/// `counter` should be 1, 2, or 3. `auto_assign` is `true` when the device
+/// number was chosen automatically rather than requested by the user.
+pub fn build_claim_stage2(
+    name: &str,
+    mac: [u8; 6],
+    ip: Ipv4Addr,
+    device_number: u8,
+    counter: u8,
+    auto_assign: bool,
+) -> Vec<u8> {
+    let mut pkt = vec![0u8; CLAIM_STAGE2_PACKET_SIZE];
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    pkt[PACKET_TYPE_OFFSET] = 0x02;
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_MAX_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[0x20] = 0x01;
+    pkt[0x21] = 0x03; // CDJ-3000 compatible
+    let len_bytes = (CLAIM_STAGE2_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
+    pkt[0x24..0x28].copy_from_slice(&ip.octets());
+    pkt[0x28..0x2e].copy_from_slice(&mac);
+    pkt[0x2e] = device_number;
+    pkt[0x2f] = counter;
+    pkt[0x30] = 0x01;
+    pkt[0x31] = if auto_assign { 0x01 } else { 0x02 };
+
+    pkt
+}
+
+/// Build a third-stage (final) device number claim packet (type `0x04`).
+///
+/// `counter` should be 1, 2, or 3.
+pub fn build_claim_stage3(name: &str, device_number: u8, counter: u8) -> Vec<u8> {
+    let mut pkt = vec![0u8; CLAIM_STAGE3_PACKET_SIZE];
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    pkt[PACKET_TYPE_OFFSET] = 0x04;
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_MAX_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[0x20] = 0x01;
+    pkt[0x21] = 0x03; // CDJ-3000 compatible
+    let len_bytes = (CLAIM_STAGE3_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
+    pkt[0x24] = device_number;
+    pkt[0x25] = counter;
+
+    pkt
+}
+
+/// Build a defense packet (type `0x08`) to assert ownership of a device number.
+///
+/// Sent directly to the IP address of a device that is trying to claim a
+/// number we already own.
+pub fn build_defense(name: &str, device_number: u8, ip: Ipv4Addr) -> Vec<u8> {
+    let mut pkt = vec![0u8; DEFENSE_PACKET_SIZE];
+    pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+    pkt[PACKET_TYPE_OFFSET] = 0x08;
+
+    let name_bytes = name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_MAX_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[0x20] = 0x01;
+    pkt[0x21] = 0x02;
+    let len_bytes = (DEFENSE_PACKET_SIZE as u16).to_be_bytes();
+    pkt[0x22..0x24].copy_from_slice(&len_bytes);
+    pkt[0x24] = device_number;
+    pkt[0x25..0x29].copy_from_slice(&ip.octets());
+
+    pkt
+}
+
+// ---------------------------------------------------------------------------
+// Claim / Defense Packet Extractors
+// ---------------------------------------------------------------------------
+
+/// Extract the defended device number from a defense packet (type `0x08`).
+///
+/// Returns `None` if the packet is too short.
+/// Assumes the header and type have already been validated.
+pub fn extract_defense_device_number(data: &[u8]) -> Option<u8> {
+    if data.len() > 0x24 {
+        Some(data[0x24])
+    } else {
+        None
+    }
+}
+
+/// Extract the claimed device number from a stage-2 claim packet (type `0x02`).
+///
+/// Returns `None` if the packet is too short.
+/// Assumes the header and type have already been validated.
+pub fn extract_claim_stage2_device_number(data: &[u8]) -> Option<u8> {
+    if data.len() > 0x2e {
+        Some(data[0x2e])
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -300,5 +463,148 @@ mod tests {
         let ann = parse_keep_alive(&pkt).unwrap();
         assert!(!ann.is_opus_quad);
         assert!(ann.is_xdj_az);
+    }
+
+    // === Claim / Defense Packet Builder Tests ===
+
+    #[test]
+    fn hello_packet_format() {
+        let pkt = build_device_hello("TestCDJ");
+        assert_eq!(pkt.len(), HELLO_PACKET_SIZE);
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+        assert_eq!(pkt[PACKET_TYPE_OFFSET], 0x0a);
+        assert_eq!(pkt[0x0b], 0x00);
+        // Name should be present
+        let name = read_device_name(&pkt, NAME_OFFSET, NAME_MAX_LEN);
+        assert_eq!(name, "TestCDJ");
+        // CDJ-3000 compatible structure
+        assert_eq!(pkt[0x20], 0x01);
+        assert_eq!(pkt[0x21], 0x04);
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x26]);
+        assert_eq!(pkt[0x24], 0x01);
+        assert_eq!(pkt[0x25], 0x40);
+    }
+
+    #[test]
+    fn claim_stage1_format() {
+        let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let pkt = build_claim_stage1("TestCDJ", mac, 2);
+        assert_eq!(pkt.len(), CLAIM_STAGE1_PACKET_SIZE);
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+        assert_eq!(pkt[PACKET_TYPE_OFFSET], 0x00);
+        assert_eq!(pkt[0x0b], 0x00);
+        assert_eq!(pkt[0x20], 0x01);
+        assert_eq!(pkt[0x21], 0x03);
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x2c]);
+        assert_eq!(pkt[0x24], 2); // counter
+        assert_eq!(pkt[0x25], 0x01); // CDJ device type
+        assert_eq!(&pkt[0x26..0x2c], &mac);
+    }
+
+    #[test]
+    fn claim_stage2_format_auto() {
+        let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+        let ip = Ipv4Addr::new(192, 168, 1, 42);
+        let pkt = build_claim_stage2("TestCDJ", mac, ip, 7, 1, true);
+        assert_eq!(pkt.len(), CLAIM_STAGE2_PACKET_SIZE);
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+        assert_eq!(pkt[PACKET_TYPE_OFFSET], 0x02);
+        assert_eq!(pkt[0x0b], 0x00);
+        assert_eq!(pkt[0x20], 0x01);
+        assert_eq!(pkt[0x21], 0x03);
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x32]);
+        assert_eq!(&pkt[0x24..0x28], &[192, 168, 1, 42]); // IP
+        assert_eq!(&pkt[0x28..0x2e], &mac);
+        assert_eq!(pkt[0x2e], 7); // device number
+        assert_eq!(pkt[0x2f], 1); // counter
+        assert_eq!(pkt[0x30], 0x01);
+        assert_eq!(pkt[0x31], 0x01); // auto-assign
+    }
+
+    #[test]
+    fn claim_stage2_specific_assign() {
+        let pkt = build_claim_stage2("Test", [0; 6], Ipv4Addr::LOCALHOST, 3, 2, false);
+        assert_eq!(pkt[0x2e], 3);
+        assert_eq!(pkt[0x2f], 2);
+        assert_eq!(pkt[0x31], 0x02); // specific assign flag
+    }
+
+    #[test]
+    fn claim_stage3_format() {
+        let pkt = build_claim_stage3("TestCDJ", 7, 3);
+        assert_eq!(pkt.len(), CLAIM_STAGE3_PACKET_SIZE);
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+        assert_eq!(pkt[PACKET_TYPE_OFFSET], 0x04);
+        assert_eq!(pkt[0x0b], 0x00);
+        assert_eq!(pkt[0x20], 0x01);
+        assert_eq!(pkt[0x21], 0x03);
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x26]);
+        assert_eq!(pkt[0x24], 7); // device number
+        assert_eq!(pkt[0x25], 3); // counter
+    }
+
+    #[test]
+    fn defense_packet_format() {
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let pkt = build_defense("TestCDJ", 7, ip);
+        assert_eq!(pkt.len(), DEFENSE_PACKET_SIZE);
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+        assert_eq!(pkt[PACKET_TYPE_OFFSET], 0x08);
+        assert_eq!(pkt[0x0b], 0x00);
+        assert_eq!(pkt[0x20], 0x01);
+        assert_eq!(pkt[0x21], 0x02);
+        assert_eq!(&pkt[0x22..0x24], &[0x00, 0x29]);
+        assert_eq!(pkt[0x24], 7); // device number
+        assert_eq!(&pkt[0x25..0x29], &[10, 0, 0, 5]); // IP
+    }
+
+    #[test]
+    fn extract_defense_device_number_valid() {
+        let pkt = build_defense("Test", 9, Ipv4Addr::LOCALHOST);
+        assert_eq!(extract_defense_device_number(&pkt), Some(9));
+    }
+
+    #[test]
+    fn extract_defense_device_number_too_short() {
+        let short = &[0u8; 0x24];
+        assert_eq!(extract_defense_device_number(short), None);
+    }
+
+    #[test]
+    fn extract_claim_stage2_device_number_valid() {
+        let pkt = build_claim_stage2("Test", [0; 6], Ipv4Addr::LOCALHOST, 12, 1, true);
+        assert_eq!(extract_claim_stage2_device_number(&pkt), Some(12));
+    }
+
+    #[test]
+    fn extract_claim_stage2_device_number_too_short() {
+        let short = &[0u8; 0x2e];
+        assert_eq!(extract_claim_stage2_device_number(short), None);
+    }
+
+    #[test]
+    fn hello_name_truncation() {
+        let long_name = "A_Very_Long_Device_Name_Exceeding_Twenty";
+        let pkt = build_device_hello(long_name);
+        let name = read_device_name(&pkt, NAME_OFFSET, NAME_MAX_LEN);
+        assert_eq!(name.len(), NAME_MAX_LEN);
+    }
+
+    #[test]
+    fn claim_stage1_all_counters() {
+        let mac = [0x01; 6];
+        for counter in 1..=3u8 {
+            let pkt = build_claim_stage1("X", mac, counter);
+            assert_eq!(pkt[0x24], counter);
+        }
+    }
+
+    #[test]
+    fn claim_stage3_all_counters() {
+        for counter in 1..=3u8 {
+            let pkt = build_claim_stage3("X", 5, counter);
+            assert_eq!(pkt[0x24], 5);
+            assert_eq!(pkt[0x25], counter);
+        }
     }
 }
