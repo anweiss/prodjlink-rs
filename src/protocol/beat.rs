@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use crate::device::types::{Bpm, DeviceNumber, DeviceType, Pitch};
 use crate::error::{ProDjLinkError, Result};
-use crate::protocol::header::{parse_header, PacketType, MAGIC_HEADER};
+use crate::protocol::command::FaderAction;
+use crate::protocol::header::{parse_header, parse_header_on_port, PacketType, BEAT_PORT, MAGIC_HEADER};
 use crate::util::{bytes_to_number, read_device_name};
 
 /// Beat packets are exactly 0x60 bytes.
@@ -311,7 +312,7 @@ pub fn build_on_air(
 const CHANNELS_ON_AIR_MIN_LENGTH: usize = 0x28; // 0x24 + 4
 
 /// Minimum packet length for a 6-channel mixer (DJM-V10).
-const CHANNELS_ON_AIR_6CH_LENGTH: usize = 0x2a; // 0x24 + 6
+const _CHANNELS_ON_AIR_6CH_LENGTH: usize = 0x2a; // 0x24 + 6
 
 /// Offset where per-channel on-air flag bytes begin.
 const CHANNEL_FLAGS_OFFSET: usize = 0x24;
@@ -367,6 +368,141 @@ pub fn parse_channels_on_air(data: &[u8]) -> Result<ChannelsOnAir> {
         device_number,
         channels,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Sync / Master-handoff / Fader-start event types & parsers
+// ---------------------------------------------------------------------------
+
+/// Sync command packet offsets (matches `build_sync_command` in command.rs).
+const SYNC_MIN_LENGTH: usize = 0x31; // prefix (0x24) + payload must include flag at 0x30
+const SYNC_FLAG_OFFSET: usize = 0x30;
+const SYNC_ON: u8 = 0x10;
+
+/// Master handoff packet offsets (matches `build_master_command` in command.rs).
+const MASTER_HANDOFF_MIN_LENGTH: usize = 0x27; // prefix + at least through 0x26
+const MASTER_HANDOFF_TARGET_OFFSET: usize = 0x26;
+
+/// Fader start packet offsets (matches `build_fader_start` in command.rs).
+const FADER_START_MIN_LENGTH: usize = 0x28; // prefix + 4 channel bytes
+
+/// A sync command received on port 50001 (type 0x2a).
+///
+/// Tells a device to turn sync mode on or off.
+#[derive(Debug, Clone)]
+pub struct SyncEvent {
+    pub device_number: DeviceNumber,
+    pub sync_enabled: bool,
+}
+
+/// A master-handoff request received on port 50001 (type 0x26).
+///
+/// Requests a device to become the tempo master.
+#[derive(Debug, Clone)]
+pub struct MasterHandoffEvent {
+    pub device_number: DeviceNumber,
+    pub target_device: DeviceNumber,
+}
+
+/// A fader-start command received on port 50001 (type 0x02).
+///
+/// Carries per-channel start/stop actions (indexed 0–3 for channels 1–4).
+#[derive(Debug, Clone)]
+pub struct FaderStartEvent {
+    pub device_number: DeviceNumber,
+    /// Per-channel fader start actions (indexed 0-3 for channels 1-4).
+    pub channels: [FaderAction; 4],
+}
+
+/// Parse a sync-control packet (type 0x2a) from raw bytes.
+pub fn parse_sync(data: &[u8]) -> Result<SyncEvent> {
+    let pkt_type = parse_header(data)?;
+    if pkt_type != PacketType::SyncControl {
+        return Err(ProDjLinkError::Parse(format!(
+            "expected SyncControl (0x2a) packet, got {:?}",
+            pkt_type
+        )));
+    }
+
+    if data.len() < SYNC_MIN_LENGTH {
+        return Err(ProDjLinkError::PacketTooShort {
+            expected: SYNC_MIN_LENGTH,
+            actual: data.len(),
+        });
+    }
+
+    let device_number = DeviceNumber::from(data[DEVICE_NUMBER_OFFSET]);
+    let sync_enabled = data[SYNC_FLAG_OFFSET] == SYNC_ON;
+
+    Ok(SyncEvent {
+        device_number,
+        sync_enabled,
+    })
+}
+
+/// Parse a master-handoff packet (type 0x26) from raw bytes.
+pub fn parse_master_handoff(data: &[u8]) -> Result<MasterHandoffEvent> {
+    let pkt_type = parse_header(data)?;
+    if pkt_type != PacketType::MasterHandoff {
+        return Err(ProDjLinkError::Parse(format!(
+            "expected MasterHandoff (0x26) packet, got {:?}",
+            pkt_type
+        )));
+    }
+
+    if data.len() < MASTER_HANDOFF_MIN_LENGTH {
+        return Err(ProDjLinkError::PacketTooShort {
+            expected: MASTER_HANDOFF_MIN_LENGTH,
+            actual: data.len(),
+        });
+    }
+
+    let device_number = DeviceNumber::from(data[DEVICE_NUMBER_OFFSET]);
+    let target_device = DeviceNumber::from(data[MASTER_HANDOFF_TARGET_OFFSET]);
+
+    Ok(MasterHandoffEvent {
+        device_number,
+        target_device,
+    })
+}
+
+/// Parse a fader-start packet (type 0x02 on port 50001) from raw bytes.
+pub fn parse_fader_start(data: &[u8]) -> Result<FaderStartEvent> {
+    let pkt_type = parse_header_on_port(data, BEAT_PORT)?;
+    if pkt_type != PacketType::FaderStart {
+        return Err(ProDjLinkError::Parse(format!(
+            "expected FaderStart (0x02) packet, got {:?}",
+            pkt_type
+        )));
+    }
+
+    if data.len() < FADER_START_MIN_LENGTH {
+        return Err(ProDjLinkError::PacketTooShort {
+            expected: FADER_START_MIN_LENGTH,
+            actual: data.len(),
+        });
+    }
+
+    let device_number = DeviceNumber::from(data[DEVICE_NUMBER_OFFSET]);
+    let channels = [
+        fader_byte_to_action(data[0x24]),
+        fader_byte_to_action(data[0x25]),
+        fader_byte_to_action(data[0x26]),
+        fader_byte_to_action(data[0x27]),
+    ];
+
+    Ok(FaderStartEvent {
+        device_number,
+        channels,
+    })
+}
+
+fn fader_byte_to_action(b: u8) -> FaderAction {
+    match b {
+        0x00 => FaderAction::Start,
+        0x01 => FaderAction::Stop,
+        _ => FaderAction::NoChange,
+    }
 }
 
 #[cfg(test)]
@@ -828,5 +964,105 @@ mod tests {
         assert_eq!(on_air.channels[&2], true);
         assert_eq!(on_air.channels[&3], false);
         assert_eq!(on_air.channels[&4], false);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sync / Master-handoff / Fader-start parse tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_sync_enable() {
+        use crate::protocol::command::build_sync_command;
+        let pkt = build_sync_command(DeviceNumber(1), DeviceNumber(2), true);
+        let evt = parse_sync(&pkt).unwrap();
+        assert_eq!(evt.device_number, DeviceNumber(1));
+        assert!(evt.sync_enabled);
+    }
+
+    #[test]
+    fn parse_sync_disable() {
+        use crate::protocol::command::build_sync_command;
+        let pkt = build_sync_command(DeviceNumber(3), DeviceNumber(4), false);
+        let evt = parse_sync(&pkt).unwrap();
+        assert_eq!(evt.device_number, DeviceNumber(3));
+        assert!(!evt.sync_enabled);
+    }
+
+    #[test]
+    fn parse_sync_wrong_type() {
+        let mut pkt = vec![0u8; 0x31];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x28; // Beat, not Sync
+        let err = parse_sync(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::Parse(_)));
+    }
+
+    #[test]
+    fn parse_sync_too_short() {
+        let mut pkt = vec![0u8; 0x20]; // way too short
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x2a;
+        let err = parse_sync(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::PacketTooShort { .. }));
+    }
+
+    #[test]
+    fn parse_master_handoff_round_trip() {
+        use crate::protocol::command::build_master_command;
+        let pkt = build_master_command(DeviceNumber(7));
+        let evt = parse_master_handoff(&pkt).unwrap();
+        assert_eq!(evt.device_number, DeviceNumber(7));
+        assert_eq!(evt.target_device, DeviceNumber(7));
+    }
+
+    #[test]
+    fn parse_master_handoff_wrong_type() {
+        let mut pkt = vec![0u8; 0x2d];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x28;
+        let err = parse_master_handoff(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::Parse(_)));
+    }
+
+    #[test]
+    fn parse_master_handoff_too_short() {
+        let mut pkt = vec![0u8; 0x20];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x26;
+        let err = parse_master_handoff(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::PacketTooShort { .. }));
+    }
+
+    #[test]
+    fn parse_fader_start_round_trip() {
+        use crate::protocol::command::build_fader_start;
+        let pkt = build_fader_start(
+            DeviceNumber(5),
+            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+        );
+        let evt = parse_fader_start(&pkt).unwrap();
+        assert_eq!(evt.device_number, DeviceNumber(5));
+        assert_eq!(evt.channels[0], FaderAction::Start);
+        assert_eq!(evt.channels[1], FaderAction::Stop);
+        assert_eq!(evt.channels[2], FaderAction::NoChange);
+        assert_eq!(evt.channels[3], FaderAction::Start);
+    }
+
+    #[test]
+    fn parse_fader_start_wrong_type() {
+        let mut pkt = vec![0u8; 0x28];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x28; // Beat, not FaderStart
+        let err = parse_fader_start(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::Parse(_)));
+    }
+
+    #[test]
+    fn parse_fader_start_too_short() {
+        let mut pkt = vec![0u8; 0x20];
+        pkt[..MAGIC_HEADER.len()].copy_from_slice(&MAGIC_HEADER);
+        pkt[0x0a] = 0x02;
+        let err = parse_fader_start(&pkt).unwrap_err();
+        assert!(matches!(err, ProDjLinkError::PacketTooShort { .. }));
     }
 }

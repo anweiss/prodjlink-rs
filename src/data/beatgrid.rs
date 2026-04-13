@@ -1,3 +1,4 @@
+use crate::device::types::Bpm;
 use crate::error::{ProDjLinkError, Result};
 
 /// Size of the beat grid header.
@@ -117,6 +118,28 @@ impl BeatGrid {
             }
         }
         Some(bar)
+    }
+
+    /// Get the total number of beats in the grid.
+    pub fn beat_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Get the BPM at a specific beat index (0-indexed).
+    pub fn bpm_at(&self, beat_index: usize) -> Option<Bpm> {
+        self.entries.get(beat_index).map(|e| Bpm(e.tempo))
+    }
+
+    /// Get the beat position within the bar (1-4) at a specific beat index.
+    pub fn beat_within_bar(&self, beat_index: usize) -> Option<u8> {
+        self.entries
+            .get(beat_index)
+            .map(|e| e.beat_within_bar as u8)
+    }
+
+    /// Get the time in milliseconds at a specific beat index.
+    pub fn time_within_track(&self, beat_index: usize) -> Option<u32> {
+        self.entries.get(beat_index).map(|e| e.time_ms)
     }
 }
 
@@ -343,5 +366,93 @@ mod tests {
         let data = make_beat_grid_data(&[(1, 12800, 0)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
         assert_eq!(grid.bar_number(0), Some(1));
+    }
+
+    // --- beat_count tests ---
+
+    #[test]
+    fn beat_count_matches_len() {
+        let data = make_beat_grid_data(&[
+            (1, 12800, 0),
+            (2, 12800, 469),
+            (3, 12800, 937),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.beat_count(), 3);
+        assert_eq!(grid.beat_count(), grid.len());
+    }
+
+    #[test]
+    fn beat_count_empty() {
+        let grid = BeatGrid::from_bytes(&[0u8; HEADER_SIZE]).unwrap();
+        assert_eq!(grid.beat_count(), 0);
+    }
+
+    // --- bpm_at tests ---
+
+    #[test]
+    fn bpm_at_valid() {
+        let data = make_beat_grid_data(&[
+            (1, 12800, 0),
+            (2, 13000, 469),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        let bpm0 = grid.bpm_at(0).unwrap();
+        assert!((bpm0.0 - 128.0).abs() < f64::EPSILON);
+        let bpm1 = grid.bpm_at(1).unwrap();
+        assert!((bpm1.0 - 130.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bpm_at_out_of_bounds() {
+        let data = make_beat_grid_data(&[(1, 12800, 0)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert!(grid.bpm_at(5).is_none());
+    }
+
+    // --- beat_within_bar tests ---
+
+    #[test]
+    fn beat_within_bar_valid() {
+        let data = make_beat_grid_data(&[
+            (1, 12800, 0),
+            (2, 12800, 469),
+            (3, 12800, 937),
+            (4, 12800, 1404),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.beat_within_bar(0), Some(1));
+        assert_eq!(grid.beat_within_bar(1), Some(2));
+        assert_eq!(grid.beat_within_bar(2), Some(3));
+        assert_eq!(grid.beat_within_bar(3), Some(4));
+    }
+
+    #[test]
+    fn beat_within_bar_out_of_bounds() {
+        let data = make_beat_grid_data(&[(1, 12800, 0)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert!(grid.beat_within_bar(99).is_none());
+    }
+
+    // --- time_within_track tests ---
+
+    #[test]
+    fn time_within_track_valid() {
+        let data = make_beat_grid_data(&[
+            (1, 12800, 0),
+            (2, 12800, 469),
+            (3, 12800, 937),
+        ]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.time_within_track(0), Some(0));
+        assert_eq!(grid.time_within_track(1), Some(469));
+        assert_eq!(grid.time_within_track(2), Some(937));
+    }
+
+    #[test]
+    fn time_within_track_out_of_bounds() {
+        let data = make_beat_grid_data(&[(1, 12800, 0)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert!(grid.time_within_track(10).is_none());
     }
 }

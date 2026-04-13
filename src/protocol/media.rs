@@ -44,6 +44,15 @@ const TOTAL_SIZE_OFFSET: usize = 0x74;
 /// Free space in bytes (u64 big-endian).
 const FREE_SPACE_OFFSET: usize = 0x7c;
 
+/// Start of the creation date field (UTF-16BE, up to 24 bytes / 12 code units).
+const CREATION_DATE_OFFSET: usize = 0x6c;
+/// Maximum byte length of the creation date field.
+const CREATION_DATE_LEN: usize = 0x18;
+/// Non-zero if the DJ has stored "My Settings" preferences on the media.
+const HAS_MY_SETTINGS_OFFSET: usize = 0xab;
+/// Minimum usable media size in bytes (u64 big-endian, if present).
+const MIN_SIZE_OFFSET: usize = 0xc0;
+
 /// Minimum packet size for a valid media details response.
 const MIN_MEDIA_DETAILS_SIZE: usize = 0x84; // 132 bytes
 
@@ -110,6 +119,12 @@ pub struct MediaDetails {
     pub is_rekordbox: bool,
     /// Colour ID associated with the media slot.
     pub color: u8,
+    /// Creation date of the media (from rekordbox).
+    pub creation_date: String,
+    /// Whether the DJ has stored "My Settings" preferences on the media.
+    pub has_my_settings: Option<bool>,
+    /// Minimum usable size in bytes, if present in the packet.
+    pub min_size: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +159,20 @@ pub fn parse_media_details(data: &[u8]) -> Result<MediaDetails> {
     let total_size = read_u64_be(data, TOTAL_SIZE_OFFSET);
     let free_space = read_u64_be(data, FREE_SPACE_OFFSET);
 
+    let creation_date = read_utf16be_name(data, CREATION_DATE_OFFSET, CREATION_DATE_LEN);
+
+    let has_my_settings = if data.len() > HAS_MY_SETTINGS_OFFSET {
+        Some(data[HAS_MY_SETTINGS_OFFSET] != 0)
+    } else {
+        None
+    };
+
+    let min_size = if data.len() >= MIN_SIZE_OFFSET + 8 {
+        Some(read_u64_be(data, MIN_SIZE_OFFSET))
+    } else {
+        None
+    };
+
     Ok(MediaDetails {
         player,
         slot,
@@ -155,6 +184,9 @@ pub fn parse_media_details(data: &[u8]) -> Result<MediaDetails> {
         free_space,
         is_rekordbox,
         color,
+        creation_date,
+        has_my_settings,
+        min_size,
     })
 }
 
@@ -516,5 +548,84 @@ mod tests {
             assert_eq!(slot_to_u8(slot), byte);
             assert_eq!(TrackSourceSlot::from(byte), slot);
         }
+    }
+
+    // -- New MediaDetails fields tests ---------------------------------------
+
+    #[test]
+    fn parse_creation_date() {
+        let mut pkt = make_media_details_packet(
+            1, 3, 3, &ascii_to_utf16("USB"), 100, 5, 0, true,
+            1_000_000, 500_000,
+        );
+        // Write a UTF-16BE creation date at CREATION_DATE_OFFSET
+        let date_units = ascii_to_utf16("2024-03-15");
+        for (i, &unit) in date_units.iter().enumerate() {
+            let off = CREATION_DATE_OFFSET + i * 2;
+            if off + 1 < pkt.len() {
+                let be = unit.to_be_bytes();
+                pkt[off] = be[0];
+                pkt[off + 1] = be[1];
+            }
+        }
+        let md = parse_media_details(&pkt).unwrap();
+        assert_eq!(md.creation_date, "2024-03-15");
+    }
+
+    #[test]
+    fn parse_creation_date_empty() {
+        // Default packet has zeros at CREATION_DATE_OFFSET → empty string
+        let pkt = make_media_details_packet(
+            1, 3, 3, &[], 0, 0, 0, false, 0, 0,
+        );
+        let md = parse_media_details(&pkt).unwrap();
+        assert_eq!(md.creation_date, "");
+    }
+
+    #[test]
+    fn parse_has_my_settings_present() {
+        // Make a packet large enough to contain HAS_MY_SETTINGS_OFFSET
+        let base = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
+        let mut pkt = vec![0u8; HAS_MY_SETTINGS_OFFSET + 1];
+        pkt[..base.len()].copy_from_slice(&base);
+        pkt[HAS_MY_SETTINGS_OFFSET] = 1;
+        let md = parse_media_details(&pkt).unwrap();
+        assert_eq!(md.has_my_settings, Some(true));
+    }
+
+    #[test]
+    fn parse_has_my_settings_false() {
+        let base = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
+        let mut pkt = vec![0u8; HAS_MY_SETTINGS_OFFSET + 1];
+        pkt[..base.len()].copy_from_slice(&base);
+        pkt[HAS_MY_SETTINGS_OFFSET] = 0;
+        let md = parse_media_details(&pkt).unwrap();
+        assert_eq!(md.has_my_settings, Some(false));
+    }
+
+    #[test]
+    fn parse_has_my_settings_absent_in_short_packet() {
+        // MIN_MEDIA_DETAILS_SIZE = 0x84 which is < 0xab + 1
+        let pkt = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
+        let md = parse_media_details(&pkt).unwrap();
+        assert!(md.has_my_settings.is_none());
+    }
+
+    #[test]
+    fn parse_min_size_present() {
+        let base = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
+        let mut pkt = vec![0u8; MIN_SIZE_OFFSET + 8];
+        pkt[..base.len()].copy_from_slice(&base);
+        let min_val: u64 = 4_000_000_000;
+        pkt[MIN_SIZE_OFFSET..MIN_SIZE_OFFSET + 8].copy_from_slice(&min_val.to_be_bytes());
+        let md = parse_media_details(&pkt).unwrap();
+        assert_eq!(md.min_size, Some(min_val));
+    }
+
+    #[test]
+    fn parse_min_size_absent_in_short_packet() {
+        let pkt = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
+        let md = parse_media_details(&pkt).unwrap();
+        assert!(md.min_size.is_none());
     }
 }

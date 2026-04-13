@@ -6,10 +6,11 @@ use tokio::task::JoinHandle;
 
 use crate::error::Result;
 use crate::protocol::beat::{
-    parse_beat, parse_channels_on_air, parse_precise_position, Beat, ChannelsOnAir,
-    PrecisePosition,
+    parse_beat, parse_channels_on_air, parse_fader_start, parse_master_handoff,
+    parse_precise_position, parse_sync, Beat, ChannelsOnAir, FaderStartEvent,
+    MasterHandoffEvent, PrecisePosition, SyncEvent,
 };
-use crate::protocol::header::{parse_header, PacketType, BEAT_PORT};
+use crate::protocol::header::{parse_header_on_port, PacketType, BEAT_PORT};
 
 /// Events emitted by the BeatFinder.
 #[derive(Debug, Clone)]
@@ -24,6 +25,9 @@ pub enum BeatEvent {
 pub struct BeatFinder {
     event_tx: broadcast::Sender<BeatEvent>,
     on_air_tx: broadcast::Sender<ChannelsOnAir>,
+    sync_tx: broadcast::Sender<SyncEvent>,
+    handoff_tx: broadcast::Sender<MasterHandoffEvent>,
+    fader_start_tx: broadcast::Sender<FaderStartEvent>,
     recv_task: JoinHandle<()>,
 }
 
@@ -39,16 +43,22 @@ impl BeatFinder {
         let socket = Arc::new(socket);
         let (event_tx, _) = broadcast::channel(512);
         let (on_air_tx, _) = broadcast::channel(64);
+        let (sync_tx, _) = broadcast::channel(64);
+        let (handoff_tx, _) = broadcast::channel(64);
+        let (fader_start_tx, _) = broadcast::channel(64);
 
         let recv_tx = event_tx.clone();
         let on_air_tx_clone = on_air_tx.clone();
+        let sync_tx_clone = sync_tx.clone();
+        let handoff_tx_clone = handoff_tx.clone();
+        let fader_start_tx_clone = fader_start_tx.clone();
         let recv_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             loop {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, _)) => {
                         let data = &buf[..len];
-                        if let Ok(ptype) = parse_header(data) {
+                        if let Ok(ptype) = parse_header_on_port(data, BEAT_PORT) {
                             match ptype {
                                 PacketType::Beat => {
                                     if let Ok(b) = parse_beat(data) {
@@ -66,6 +76,21 @@ impl BeatFinder {
                                         let _ = on_air_tx_clone.send(oa);
                                     }
                                 }
+                                PacketType::SyncControl => {
+                                    if let Ok(se) = parse_sync(data) {
+                                        let _ = sync_tx_clone.send(se);
+                                    }
+                                }
+                                PacketType::MasterHandoff => {
+                                    if let Ok(mh) = parse_master_handoff(data) {
+                                        let _ = handoff_tx_clone.send(mh);
+                                    }
+                                }
+                                PacketType::FaderStart => {
+                                    if let Ok(fs) = parse_fader_start(data) {
+                                        let _ = fader_start_tx_clone.send(fs);
+                                    }
+                                }
                                 _ => {}
                             }
                         }
@@ -78,6 +103,9 @@ impl BeatFinder {
         Ok(Self {
             event_tx,
             on_air_tx,
+            sync_tx,
+            handoff_tx,
+            fader_start_tx,
             recv_task,
         })
     }
@@ -90,6 +118,21 @@ impl BeatFinder {
     /// Subscribe to channels-on-air updates from mixers.
     pub fn subscribe_on_air(&self) -> broadcast::Receiver<ChannelsOnAir> {
         self.on_air_tx.subscribe()
+    }
+
+    /// Subscribe to sync control events.
+    pub fn subscribe_sync(&self) -> broadcast::Receiver<SyncEvent> {
+        self.sync_tx.subscribe()
+    }
+
+    /// Subscribe to master-handoff request events.
+    pub fn subscribe_master_handoff(&self) -> broadcast::Receiver<MasterHandoffEvent> {
+        self.handoff_tx.subscribe()
+    }
+
+    /// Subscribe to fader-start command events.
+    pub fn subscribe_fader_start(&self) -> broadcast::Receiver<FaderStartEvent> {
+        self.fader_start_tx.subscribe()
     }
 
     /// Stop the beat finder.
@@ -142,12 +185,21 @@ mod tests {
 
     #[test]
     fn beat_finder_has_expected_api() {
-        // Compile-time check: BeatFinder exposes subscribe, subscribe_on_air, and stop.
+        // Compile-time check: BeatFinder exposes all subscribe methods and stop.
         fn _assert_subscribe(bf: &BeatFinder) -> broadcast::Receiver<BeatEvent> {
             bf.subscribe()
         }
         fn _assert_subscribe_on_air(bf: &BeatFinder) -> broadcast::Receiver<ChannelsOnAir> {
             bf.subscribe_on_air()
+        }
+        fn _assert_subscribe_sync(bf: &BeatFinder) -> broadcast::Receiver<SyncEvent> {
+            bf.subscribe_sync()
+        }
+        fn _assert_subscribe_handoff(bf: &BeatFinder) -> broadcast::Receiver<MasterHandoffEvent> {
+            bf.subscribe_master_handoff()
+        }
+        fn _assert_subscribe_fader(bf: &BeatFinder) -> broadcast::Receiver<FaderStartEvent> {
+            bf.subscribe_fader_start()
         }
         fn _assert_stop(bf: BeatFinder) {
             bf.stop();
@@ -327,6 +379,128 @@ mod tests {
         let result =
             tokio::time::timeout(std::time::Duration::from_millis(200), beat_rx.recv()).await;
         assert!(result.is_err(), "on-air should not appear on beat channel");
+
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn send_receive_sync_on_loopback() {
+        use crate::protocol::command::build_sync_command;
+
+        let socket = match UdpSocket::bind("127.0.0.1:0").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let local_addr = socket.local_addr().unwrap();
+
+        let finder = BeatFinder::start_with_socket(socket).unwrap();
+        let mut rx = finder.subscribe_sync();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let pkt = build_sync_command(
+            crate::device::types::DeviceNumber(1),
+            crate::device::types::DeviceNumber(2),
+            true,
+        );
+        sender.send_to(&pkt, local_addr).await.unwrap();
+
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timed out waiting for sync event")
+            .expect("channel error");
+
+        assert_eq!(evt.device_number, crate::device::types::DeviceNumber(1));
+        assert!(evt.sync_enabled);
+
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn send_receive_master_handoff_on_loopback() {
+        use crate::protocol::command::build_master_command;
+
+        let socket = match UdpSocket::bind("127.0.0.1:0").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let local_addr = socket.local_addr().unwrap();
+
+        let finder = BeatFinder::start_with_socket(socket).unwrap();
+        let mut rx = finder.subscribe_master_handoff();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let pkt = build_master_command(crate::device::types::DeviceNumber(3));
+        sender.send_to(&pkt, local_addr).await.unwrap();
+
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timed out waiting for master handoff event")
+            .expect("channel error");
+
+        assert_eq!(evt.device_number, crate::device::types::DeviceNumber(3));
+        assert_eq!(evt.target_device, crate::device::types::DeviceNumber(3));
+
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn send_receive_fader_start_on_loopback() {
+        use crate::protocol::command::{build_fader_start, FaderAction};
+
+        let socket = match UdpSocket::bind("127.0.0.1:0").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let local_addr = socket.local_addr().unwrap();
+
+        let finder = BeatFinder::start_with_socket(socket).unwrap();
+        let mut rx = finder.subscribe_fader_start();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let pkt = build_fader_start(
+            crate::device::types::DeviceNumber(5),
+            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+        );
+        sender.send_to(&pkt, local_addr).await.unwrap();
+
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timed out waiting for fader start event")
+            .expect("channel error");
+
+        assert_eq!(evt.device_number, crate::device::types::DeviceNumber(5));
+        assert_eq!(evt.channels[0], FaderAction::Start);
+        assert_eq!(evt.channels[1], FaderAction::Stop);
+        assert_eq!(evt.channels[2], FaderAction::NoChange);
+        assert_eq!(evt.channels[3], FaderAction::Start);
+
+        finder.stop();
+    }
+
+    #[tokio::test]
+    async fn sync_does_not_appear_on_beat_channel() {
+        use crate::protocol::command::build_sync_command;
+
+        let socket = match UdpSocket::bind("127.0.0.1:0").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let local_addr = socket.local_addr().unwrap();
+
+        let finder = BeatFinder::start_with_socket(socket).unwrap();
+        let mut beat_rx = finder.subscribe();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let pkt = build_sync_command(
+            crate::device::types::DeviceNumber(1),
+            crate::device::types::DeviceNumber(2),
+            true,
+        );
+        sender.send_to(&pkt, local_addr).await.unwrap();
+
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(200), beat_rx.recv()).await;
+        assert!(result.is_err(), "sync should not appear on beat channel");
 
         finder.stop();
     }

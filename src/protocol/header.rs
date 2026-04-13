@@ -38,9 +38,11 @@ pub enum PacketType {
     Beat,
     /// Precise position packet (CDJ-3000+) (0x7f on port 50001)
     PrecisePosition,
-    /// Sync control
+    /// Sync control (0x2a)
     SyncControl,
-    /// Fader start/stop
+    /// Master handoff request (0x26)
+    MasterHandoff,
+    /// Fader start/stop (0x02 on port 50001)
     FaderStart,
     /// Load track command
     LoadTrack,
@@ -65,8 +67,10 @@ impl From<u8> for PacketType {
             0x0a => PacketType::DeviceHello,
             0x0b => PacketType::PrecisePosition,
             0x03 => PacketType::OnAir,
+            0x26 => PacketType::MasterHandoff,
             0x28 => PacketType::Beat,
             0x29 => PacketType::MixerStatus,
+            0x2a => PacketType::SyncControl,
             other => PacketType::Unknown(other),
         }
     }
@@ -80,6 +84,7 @@ impl PacketType {
     pub fn from_u8_on_port(byte: u8, port: u16) -> PacketType {
         match (byte, port) {
             (0x0a, STATUS_PORT) => PacketType::CdjStatus,
+            (0x02, BEAT_PORT) => PacketType::FaderStart,
             _ => PacketType::from(byte),
         }
     }
@@ -178,5 +183,31 @@ mod tests {
         let pkt = make_packet(0x29);
         let pt = parse_header_on_port(&pkt, STATUS_PORT).unwrap();
         assert_eq!(pt, PacketType::MixerStatus);
+    }
+
+    #[test]
+    fn parse_sync_control_type() {
+        let pkt = make_packet(0x2a);
+        assert_eq!(parse_header(&pkt).unwrap(), PacketType::SyncControl);
+    }
+
+    #[test]
+    fn parse_master_handoff_type() {
+        let pkt = make_packet(0x26);
+        assert_eq!(parse_header(&pkt).unwrap(), PacketType::MasterHandoff);
+    }
+
+    #[test]
+    fn disambiguate_0x02_on_beat_port() {
+        let pkt = make_packet(0x02);
+        let pt = parse_header_on_port(&pkt, BEAT_PORT).unwrap();
+        assert_eq!(pt, PacketType::FaderStart);
+    }
+
+    #[test]
+    fn disambiguate_0x02_on_discovery_port() {
+        let pkt = make_packet(0x02);
+        let pt = parse_header_on_port(&pkt, DISCOVERY_PORT).unwrap();
+        assert_eq!(pt, PacketType::DeviceClaimStage2);
     }
 }

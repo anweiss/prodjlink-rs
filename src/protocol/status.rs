@@ -157,7 +157,13 @@ impl CdjStatus {
         if self.packet_length >= 0xd4 {
             self.is_playing_flag
         } else {
-            self.play_state == PlayState::Playing && self.play_state_2.is_moving()
+            // Pre-nexus: playing, looping, or searching while moving
+            match self.play_state {
+                PlayState::Playing | PlayState::Looping | PlayState::Searching => {
+                    self.play_state_2.is_moving()
+                }
+                _ => false,
+            }
         }
     }
 
@@ -326,6 +332,11 @@ impl CdjStatus {
         self.beat_within_bar > 0 && self.beat_within_bar <= 4
     }
 
+    /// Whether the player is in BPM-only sync mode (jog wheel nudge while synced).
+    pub fn is_bpm_only_synced(&self) -> bool {
+        self.is_bpm_synced && !self.is_synced
+    }
+
     /// The device number that master is being yielded to, if any.
     pub fn master_yielding_to(&self) -> Option<DeviceNumber> {
         self.master_hand_off.map(DeviceNumber::from)
@@ -364,8 +375,11 @@ impl MixerStatus {
     }
 
     /// Whether `beat_within_bar` has musical significance.
+    ///
+    /// Always returns `false` for mixers — they do not track beat positions
+    /// within a bar in a meaningful way (matches Java MixerStatus behaviour).
     pub fn is_beat_within_bar_meaningful(&self) -> bool {
-        self.beat_within_bar > 0 && self.beat_within_bar <= 4
+        false
     }
 
     /// The device number that master is being yielded to, if any.
@@ -1872,10 +1886,11 @@ mod tests {
     }
 
     #[test]
-    fn mixer_beat_within_bar_meaningful() {
+    fn mixer_beat_within_bar_never_meaningful() {
+        // Mixers never report meaningful beat positions (matches Java MixerStatus).
         let pkt = make_mixer_packet(); // beat_within_bar = 3
         let s = parse_mixer_status(&pkt).unwrap();
-        assert!(s.is_beat_within_bar_meaningful());
+        assert!(!s.is_beat_within_bar_meaningful());
     }
 
     #[test]
@@ -1907,5 +1922,86 @@ mod tests {
         pkt[MIXER_MASTER_HAND_OFF_OFFSET] = 4;
         let s = parse_mixer_status(&pkt).unwrap();
         assert_eq!(s.master_yielding_to(), Some(DeviceNumber(4)));
+    }
+
+    // -- is_bpm_only_synced tests --
+
+    #[test]
+    fn cdj_is_bpm_only_synced_true() {
+        let mut pkt = make_cdj_packet();
+        // bpm_sync set, synced cleared
+        pkt[FLAGS_OFFSET] = FLAG_BPM_SYNC;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_bpm_only_synced());
+    }
+
+    #[test]
+    fn cdj_is_bpm_only_synced_false_both_set() {
+        let mut pkt = make_cdj_packet();
+        pkt[FLAGS_OFFSET] = FLAG_BPM_SYNC | FLAG_SYNCED;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_bpm_only_synced());
+    }
+
+    #[test]
+    fn cdj_is_bpm_only_synced_false_neither() {
+        let mut pkt = make_cdj_packet();
+        pkt[FLAGS_OFFSET] = 0;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_bpm_only_synced());
+    }
+
+    // -- Pre-nexus is_playing fallback: looping + searching --
+
+    #[test]
+    fn is_playing_pre_nexus_looping_moving() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0;
+        pkt[PLAY_STATE_OFFSET] = 0x04; // Looping
+        pkt[PLAY_STATE_2_OFFSET] = 0x6a; // Moving
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(s.is_playing());
+    }
+
+    #[test]
+    fn is_playing_pre_nexus_searching_moving() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0;
+        pkt[PLAY_STATE_OFFSET] = 0x09; // Searching
+        pkt[PLAY_STATE_2_OFFSET] = 0x6a; // Moving
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(s.is_playing());
+    }
+
+    #[test]
+    fn is_playing_pre_nexus_searching_stopped() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0;
+        pkt[PLAY_STATE_OFFSET] = 0x09; // Searching
+        pkt[PLAY_STATE_2_OFFSET] = 0x6e; // Stopped
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(!s.is_playing());
+    }
+
+    #[test]
+    fn is_playing_pre_nexus_paused_moving() {
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0;
+        pkt[PLAY_STATE_OFFSET] = 0x05; // Paused
+        pkt[PLAY_STATE_2_OFFSET] = 0x6a; // Moving
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(!s.is_playing()); // Paused is not considered playing
     }
 }

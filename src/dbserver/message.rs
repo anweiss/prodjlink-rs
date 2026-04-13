@@ -8,6 +8,30 @@ pub const MESSAGE_START: u32 = 0x872349ae;
 /// Maximum number of arguments per message.
 pub const MAX_ARGS: usize = 12;
 
+// ---------------------------------------------------------------------------
+// ANLZ file type and tag constants (from Java Message.java)
+// ---------------------------------------------------------------------------
+
+/// ANLZ file type for .DAT files (standard analysis).
+pub const ANLZ_FILE_TYPE_DAT: &str = "DAT";
+/// ANLZ file type for .EXT files (extended analysis, Nexus).
+pub const ANLZ_FILE_TYPE_EXT: &str = "EXT";
+/// ANLZ file type for .2EX files (extended analysis, Nexus 2).
+pub const ANLZ_FILE_TYPE_2EX: &str = "2EX";
+
+/// ANLZ tag type for colour waveform preview data.
+pub const ANLZ_TAG_COLOR_WAVEFORM_PREVIEW: &str = "PWV4";
+/// ANLZ tag type for colour waveform detail data.
+pub const ANLZ_TAG_COLOR_WAVEFORM_DETAIL: &str = "PWV5";
+/// ANLZ tag type for three-band waveform preview data.
+pub const ANLZ_TAG_3BAND_WAVEFORM_PREVIEW: &str = "PWV6";
+/// ANLZ tag type for three-band waveform detail data.
+pub const ANLZ_TAG_3BAND_WAVEFORM_DETAIL: &str = "PWV7";
+/// ANLZ tag type for song structure (phrases) data.
+pub const ANLZ_TAG_SONG_STRUCTURE: &str = "PSSI";
+/// ANLZ tag type for cue point comments.
+pub const ANLZ_TAG_CUE_COMMENT: &str = "PCO2";
+
 /// Known dbserver message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageType {
@@ -976,5 +1000,22 @@ mod tests {
         assert!(msg.arg_number(0).is_ok());
         assert!(msg.arg_number(1).is_err());
         assert!(msg.arg_string(0).is_err()); // wrong type
+    }
+
+    #[test]
+    fn anlz_file_type_constants() {
+        assert_eq!(ANLZ_FILE_TYPE_DAT, "DAT");
+        assert_eq!(ANLZ_FILE_TYPE_EXT, "EXT");
+        assert_eq!(ANLZ_FILE_TYPE_2EX, "2EX");
+    }
+
+    #[test]
+    fn anlz_tag_constants() {
+        assert_eq!(ANLZ_TAG_COLOR_WAVEFORM_PREVIEW, "PWV4");
+        assert_eq!(ANLZ_TAG_COLOR_WAVEFORM_DETAIL, "PWV5");
+        assert_eq!(ANLZ_TAG_3BAND_WAVEFORM_PREVIEW, "PWV6");
+        assert_eq!(ANLZ_TAG_3BAND_WAVEFORM_DETAIL, "PWV7");
+        assert_eq!(ANLZ_TAG_SONG_STRUCTURE, "PSSI");
+        assert_eq!(ANLZ_TAG_CUE_COMMENT, "PCO2");
     }
 }

@@ -120,6 +120,90 @@ pub fn format_mac(mac: &[u8; 6]) -> String {
     )
 }
 
+// --- Half-frame / time conversion ---
+
+/// Convert a half-frame position (1/150s units, used in cue lists) to milliseconds.
+pub fn half_frame_to_time(half_frame: u32) -> u64 {
+    (half_frame as u64) * 100 / 15
+}
+
+/// Convert milliseconds to half-frame position.
+pub fn time_to_half_frame(ms: u64) -> u32 {
+    ((ms * 15 + 50) / 100) as u32
+}
+
+/// Convert milliseconds to half-frame position (rounded up).
+pub fn time_to_half_frame_rounded(ms: u64) -> u32 {
+    ((ms * 15 + 99) / 100) as u32
+}
+
+// --- Phrase colour constants (from Java Util.java) ---
+
+/// Phrase visualization colour constants (RGB tuples) — low/mid/high intensities.
+pub const PHRASE_LOW_RED: (u8, u8, u8) = (0xc8, 0x00, 0x00);
+pub const PHRASE_MID_RED: (u8, u8, u8) = (0xff, 0x00, 0x00);
+pub const PHRASE_HIGH_RED: (u8, u8, u8) = (0xff, 0x50, 0x50);
+pub const PHRASE_LOW_PINK: (u8, u8, u8) = (0xc8, 0x00, 0xc8);
+pub const PHRASE_MID_PINK: (u8, u8, u8) = (0xff, 0x00, 0xff);
+pub const PHRASE_HIGH_PINK: (u8, u8, u8) = (0xff, 0x60, 0xff);
+pub const PHRASE_LOW_BLUE: (u8, u8, u8) = (0x00, 0x40, 0xc8);
+pub const PHRASE_MID_BLUE: (u8, u8, u8) = (0x00, 0x64, 0xff);
+pub const PHRASE_HIGH_BLUE: (u8, u8, u8) = (0x50, 0xb4, 0xff);
+pub const PHRASE_LOW_GREEN: (u8, u8, u8) = (0x00, 0xc8, 0x00);
+pub const PHRASE_MID_GREEN: (u8, u8, u8) = (0x00, 0xff, 0x00);
+pub const PHRASE_HIGH_GREEN: (u8, u8, u8) = (0x60, 0xff, 0x60);
+pub const PHRASE_LOW_PURPLE: (u8, u8, u8) = (0x60, 0x00, 0xd8);
+pub const PHRASE_MID_PURPLE: (u8, u8, u8) = (0x80, 0x00, 0xff);
+pub const PHRASE_HIGH_PURPLE: (u8, u8, u8) = (0xb4, 0x64, 0xff);
+
+/// Map a phrase mood and intensity to a display colour.
+///
+/// `mood` selects the hue family (1 = red, 2 = orange/pink, 3 = blue,
+/// 4 = green, 5 = purple; other values fall back to white).
+/// `intensity` selects brightness: 0 → low, 1 → mid, ≥2 → high.
+pub fn phrase_color(mood: u8, intensity: u8) -> (u8, u8, u8) {
+    match mood {
+        1 => match intensity {
+            0 => PHRASE_LOW_RED,
+            1 => PHRASE_MID_RED,
+            _ => PHRASE_HIGH_RED,
+        },
+        2 => match intensity {
+            0 => PHRASE_LOW_PINK,
+            1 => PHRASE_MID_PINK,
+            _ => PHRASE_HIGH_PINK,
+        },
+        3 => match intensity {
+            0 => PHRASE_LOW_BLUE,
+            1 => PHRASE_MID_BLUE,
+            _ => PHRASE_HIGH_BLUE,
+        },
+        4 => match intensity {
+            0 => PHRASE_LOW_GREEN,
+            1 => PHRASE_MID_GREEN,
+            _ => PHRASE_HIGH_GREEN,
+        },
+        5 => match intensity {
+            0 => PHRASE_LOW_PURPLE,
+            1 => PHRASE_MID_PURPLE,
+            _ => PHRASE_HIGH_PURPLE,
+        },
+        _ => (0xff, 0xff, 0xff), // unknown mood → white
+    }
+}
+
+/// Human-readable label for a phrase mood value.
+pub fn phrase_label(mood: u8) -> &'static str {
+    match mood {
+        1 => "High",
+        2 => "Mid",
+        3 => "Low",
+        4 => "Verse",
+        5 => "Chorus",
+        _ => "Unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -34,6 +34,8 @@ pub struct DataReference {
     pub slot: TrackSourceSlot,
     /// The rekordbox database ID.
     pub rekordbox_id: u32,
+    /// The type of track (rekordbox, unanalyzed, etc.).
+    pub track_type: TrackType,
 }
 
 impl DataReference {
@@ -42,6 +44,22 @@ impl DataReference {
             player,
             slot,
             rekordbox_id,
+            track_type: TrackType::NoTrack,
+        }
+    }
+
+    /// Create a DataReference with an explicit track type.
+    pub fn with_track_type(
+        player: DeviceNumber,
+        slot: TrackSourceSlot,
+        rekordbox_id: u32,
+        track_type: TrackType,
+    ) -> Self {
+        Self {
+            player,
+            slot,
+            rekordbox_id,
+            track_type,
         }
     }
 }
@@ -222,6 +240,21 @@ mod tests {
         assert_eq!(dr.player, DeviceNumber(3));
         assert_eq!(dr.slot, TrackSourceSlot::UsbSlot);
         assert_eq!(dr.rekordbox_id, 42);
+        assert_eq!(dr.track_type, TrackType::NoTrack);
+    }
+
+    #[test]
+    fn data_reference_with_track_type() {
+        let dr = DataReference::with_track_type(
+            DeviceNumber(1),
+            TrackSourceSlot::SdSlot,
+            99,
+            TrackType::Rekordbox,
+        );
+        assert_eq!(dr.player, DeviceNumber(1));
+        assert_eq!(dr.slot, TrackSourceSlot::SdSlot);
+        assert_eq!(dr.rekordbox_id, 99);
+        assert_eq!(dr.track_type, TrackType::Rekordbox);
     }
 
     #[test]
