@@ -696,11 +696,7 @@ mod tests {
     use bytes::Bytes;
 
     /// Build the raw wire bytes for a message by hand.
-    fn build_wire_bytes(
-        transaction: u32,
-        kind: u16,
-        fields: &[Field],
-    ) -> BytesMut {
+    fn build_wire_bytes(transaction: u32, kind: u16, fields: &[Field]) -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_u32(MESSAGE_START);
         buf.put_u32(transaction);
@@ -717,10 +713,7 @@ mod tests {
 
     #[test]
     fn parse_hand_crafted_message() {
-        let fields = vec![
-            Field::number_with_size(1, 4),
-            Field::string("hello"),
-        ];
+        let fields = vec![Field::number_with_size(1, 4), Field::string("hello")];
         let wire = build_wire_bytes(0x01, 0x2002, &fields);
         let msg = Message::parse(&mut &wire[..]).unwrap();
 

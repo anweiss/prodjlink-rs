@@ -58,9 +58,8 @@ impl Client {
             ));
         }
         let mut cursor = &resp_buf[..n];
-        let resp_field = Field::parse(&mut cursor).map_err(|e| {
-            ProDjLinkError::ConnectionFailed(format!("greeting parse failed: {e}"))
-        })?;
+        let resp_field = Field::parse(&mut cursor)
+            .map_err(|e| ProDjLinkError::ConnectionFailed(format!("greeting parse failed: {e}")))?;
         match resp_field {
             Field::Number { value: 1, .. } => {}
             _ => {
@@ -145,20 +144,14 @@ impl Client {
             let mut tmp = [0u8; 4096];
             let n = self.reader.read(&mut tmp).await?;
             if n == 0 {
-                return Err(ProDjLinkError::ConnectionFailed(
-                    "connection closed".into(),
-                ));
+                return Err(ProDjLinkError::ConnectionFailed("connection closed".into()));
             }
             self.read_buf.extend_from_slice(&tmp[..n]);
         }
     }
 
     /// Send a request and verify the response transaction ID matches.
-    pub async fn simple_request(
-        &mut self,
-        kind: MessageType,
-        args: Vec<Field>,
-    ) -> Result<Message> {
+    pub async fn simple_request(&mut self, kind: MessageType, args: Vec<Field>) -> Result<Message> {
         let txn = self.next_transaction();
         let msg = Message::new(txn, kind, args);
         let resp = self.send_message(msg).await?;
@@ -303,10 +296,7 @@ mod tests {
 
         let mut client = Client::connect(addr, 5, 3).await.unwrap();
         let resp = client
-            .simple_request(
-                MessageType::MetadataReq,
-                vec![Field::number(42)],
-            )
+            .simple_request(MessageType::MetadataReq, vec![Field::number(42)])
             .await
             .unwrap();
 
@@ -369,21 +359,9 @@ mod tests {
 
             // Send MenuHeader + 3 MenuItems + MenuFooter
             let header = Message::new(txn, MessageType::MenuHeader, vec![]);
-            let item1 = Message::new(
-                txn,
-                MessageType::MenuItem,
-                vec![Field::string("Track A")],
-            );
-            let item2 = Message::new(
-                txn,
-                MessageType::MenuItem,
-                vec![Field::string("Track B")],
-            );
-            let item3 = Message::new(
-                txn,
-                MessageType::MenuItem,
-                vec![Field::string("Track C")],
-            );
+            let item1 = Message::new(txn, MessageType::MenuItem, vec![Field::string("Track A")]);
+            let item2 = Message::new(txn, MessageType::MenuItem, vec![Field::string("Track B")]);
+            let item3 = Message::new(txn, MessageType::MenuItem, vec![Field::string("Track C")]);
             let footer = Message::new(txn, MessageType::MenuFooter, vec![]);
 
             let mut out = BytesMut::new();

@@ -1,4 +1,4 @@
-use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType};
+use crate::device::types::{Bpm, DeviceNumber, SlotReference, TrackSourceSlot, TrackType};
 
 /// A searchable item with both a database ID and display label.
 /// Used for artist, album, genre, key, label, original artist, and remixer.
@@ -303,13 +303,13 @@ mod tests {
             1,
             MessageType::MenuItem,
             vec![
-                Field::number(0),                    // arg 0
-                Field::number(num),                  // arg 1: numeric value
-                Field::number(0),                    // arg 2
-                Field::string(text),                 // arg 3: text value
-                Field::number(0),                    // arg 4
-                Field::string(""),                   // arg 5
-                Field::number(item_type as u32),     // arg 6: item type
+                Field::number(0),                // arg 0
+                Field::number(num),              // arg 1: numeric value
+                Field::number(0),                // arg 2
+                Field::string(text),             // arg 3: text value
+                Field::number(0),                // arg 4
+                Field::string(""),               // arg 5
+                Field::number(item_type as u32), // arg 6: item type
             ],
         )
     }
@@ -317,22 +317,22 @@ mod tests {
     #[test]
     fn from_menu_items_populates_fields() {
         let items = vec![
-            mock_menu_item(0x0004, "My Track", 0),        // TrackTitle
-            mock_menu_item(0x0007, "DJ Artist", 10),       // Artist
-            mock_menu_item(0x0002, "Cool Album", 20),      // AlbumTitle
-            mock_menu_item(0x0006, "House", 30),           // Genre
-            mock_menu_item(0x0023, "Great track!", 0),     // Comment
-            mock_menu_item(0x000f, "Am", 40),              // Key
-            mock_menu_item(0x002e, "2024-01-15", 0),       // DateAdded
-            mock_menu_item(0x000a, "", 4),                 // Rating = 4
-            mock_menu_item(0x000d, "", 12800),             // Tempo = 128.00 BPM
-            mock_menu_item(0x0016, "", 0),                 // ColorOrange => color = 3
-            mock_menu_item(0x000e, "Cool Label", 50),      // Label
-            mock_menu_item(0x0028, "Orig Artist", 60),     // OriginalArtist
-            mock_menu_item(0x0029, "Remix Guy", 70),       // Remixer
-            mock_menu_item(0x000b, "", 240),               // Duration = 240s
-            mock_menu_item(0x0010, "", 320),               // BitRate = 320
-            mock_menu_item(0x0011, "", 2023),              // Year = 2023
+            mock_menu_item(0x0004, "My Track", 0),     // TrackTitle
+            mock_menu_item(0x0007, "DJ Artist", 10),   // Artist
+            mock_menu_item(0x0002, "Cool Album", 20),  // AlbumTitle
+            mock_menu_item(0x0006, "House", 30),       // Genre
+            mock_menu_item(0x0023, "Great track!", 0), // Comment
+            mock_menu_item(0x000f, "Am", 40),          // Key
+            mock_menu_item(0x002e, "2024-01-15", 0),   // DateAdded
+            mock_menu_item(0x000a, "", 4),             // Rating = 4
+            mock_menu_item(0x000d, "", 12800),         // Tempo = 128.00 BPM
+            mock_menu_item(0x0016, "", 0),             // ColorOrange => color = 3
+            mock_menu_item(0x000e, "Cool Label", 50),  // Label
+            mock_menu_item(0x0028, "Orig Artist", 60), // OriginalArtist
+            mock_menu_item(0x0029, "Remix Guy", 70),   // Remixer
+            mock_menu_item(0x000b, "", 240),           // Duration = 240s
+            mock_menu_item(0x0010, "", 320),           // BitRate = 320
+            mock_menu_item(0x0011, "", 2023),          // Year = 2023
         ];
 
         let meta = TrackMetadata::from_menu_items(make_data_ref(), &items);

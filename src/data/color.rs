@@ -50,6 +50,28 @@ impl ColorItem {
     pub fn is_no_color(id: u16) -> bool {
         id == 0
     }
+
+    /// Returns the name of this color (e.g. "Pink", "Red", "No Color").
+    pub fn color_name(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the color name for a given protocol ID without constructing a
+    /// full `ColorItem`. Returns `None` for unknown IDs (> 8).
+    pub fn color_name_for_id(id: u16) -> Option<&'static str> {
+        match id {
+            0 => Some("No Color"),
+            1 => Some("Pink"),
+            2 => Some("Red"),
+            3 => Some("Orange"),
+            4 => Some("Yellow"),
+            5 => Some("Green"),
+            6 => Some("Aqua"),
+            7 => Some("Blue"),
+            8 => Some("Purple"),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ColorItem {
@@ -159,5 +181,24 @@ mod tests {
         let b = a.clone();
         assert_eq!(a, b);
         let _ = format!("{a:?}");
+    }
+
+    #[test]
+    fn color_name_returns_label() {
+        let item = ColorItem::for_id(1).unwrap();
+        assert_eq!(item.color_name(), "Pink");
+    }
+
+    #[test]
+    fn color_name_for_id_known() {
+        assert_eq!(ColorItem::color_name_for_id(3), Some("Orange"));
+        assert_eq!(ColorItem::color_name_for_id(0), Some("No Color"));
+        assert_eq!(ColorItem::color_name_for_id(8), Some("Purple"));
+    }
+
+    #[test]
+    fn color_name_for_id_unknown() {
+        assert_eq!(ColorItem::color_name_for_id(9), None);
+        assert_eq!(ColorItem::color_name_for_id(100), None);
     }
 }

@@ -210,8 +210,7 @@ pub fn build_media_query(
     // Device name — "prodjlink-rs" padded with nulls
     let name = b"prodjlink-rs";
     let copy_len = name.len().min(DEVICE_NAME_LEN);
-    packet[DEVICE_NAME_OFFSET..DEVICE_NAME_OFFSET + copy_len]
-        .copy_from_slice(&name[..copy_len]);
+    packet[DEVICE_NAME_OFFSET..DEVICE_NAME_OFFSET + copy_len].copy_from_slice(&name[..copy_len]);
 
     // Source device number
     packet[0x21] = source_device.0;
@@ -324,8 +323,7 @@ mod tests {
         }
 
         // Track count (u32 BE)
-        pkt[TRACK_COUNT_OFFSET..TRACK_COUNT_OFFSET + 4]
-            .copy_from_slice(&track_count.to_be_bytes());
+        pkt[TRACK_COUNT_OFFSET..TRACK_COUNT_OFFSET + 4].copy_from_slice(&track_count.to_be_bytes());
 
         // Playlist count (u16 BE)
         pkt[PLAYLIST_COUNT_OFFSET..PLAYLIST_COUNT_OFFSET + 2]
@@ -336,10 +334,8 @@ mod tests {
         pkt[REKORDBOX_OFFSET] = if is_rekordbox { 1 } else { 0 };
 
         // Total size / free space (u64 BE)
-        pkt[TOTAL_SIZE_OFFSET..TOTAL_SIZE_OFFSET + 8]
-            .copy_from_slice(&total_size.to_be_bytes());
-        pkt[FREE_SPACE_OFFSET..FREE_SPACE_OFFSET + 8]
-            .copy_from_slice(&free_space.to_be_bytes());
+        pkt[TOTAL_SIZE_OFFSET..TOTAL_SIZE_OFFSET + 8].copy_from_slice(&total_size.to_be_bytes());
+        pkt[FREE_SPACE_OFFSET..FREE_SPACE_OFFSET + 8].copy_from_slice(&free_space.to_be_bytes());
 
         pkt
     }
@@ -382,17 +378,17 @@ mod tests {
     fn parse_usb_media_details() {
         let name_units = ascii_to_utf16("MY_USB");
         let total: u64 = 32_000_000_000; // ~32 GB
-        let free: u64 = 16_000_000_000;  // ~16 GB
+        let free: u64 = 16_000_000_000; // ~16 GB
 
         let pkt = make_media_details_packet(
-            2,           // player 2
-            3,           // UsbSlot
-            3,           // MediaType::Usb
+            2, // player 2
+            3, // UsbSlot
+            3, // MediaType::Usb
             &name_units,
-            1024,        // track count
-            8,           // playlists
-            5,           // colour
-            true,        // rekordbox analysed
+            1024, // track count
+            8,    // playlists
+            5,    // colour
+            true, // rekordbox analysed
             total,
             free,
         );
@@ -414,13 +410,13 @@ mod tests {
     #[test]
     fn parse_no_media() {
         let pkt = make_media_details_packet(
-            1,    // player 1
-            0,    // NoTrack
-            0,    // MediaType::None
-            &[],  // empty name
-            0,    // no tracks
-            0,    // no playlists
-            0,    // colour
+            1,   // player 1
+            0,   // NoTrack
+            0,   // MediaType::None
+            &[], // empty name
+            0,   // no tracks
+            0,   // no playlists
+            0,   // colour
             false,
             0,
             0,
@@ -443,9 +439,9 @@ mod tests {
     fn parse_sd_media_details() {
         let name_units = ascii_to_utf16("DJ_SD_CARD");
         let pkt = make_media_details_packet(
-            3,           // player 3
-            2,           // SdSlot
-            2,           // MediaType::Sd
+            3, // player 3
+            2, // SdSlot
+            2, // MediaType::Sd
             &name_units,
             512,
             4,
@@ -487,11 +483,7 @@ mod tests {
 
     #[test]
     fn build_query_has_valid_header() {
-        let pkt = build_media_query(
-            DeviceNumber(1),
-            DeviceNumber(3),
-            TrackSourceSlot::UsbSlot,
-        );
+        let pkt = build_media_query(DeviceNumber(1), DeviceNumber(3), TrackSourceSlot::UsbSlot);
 
         assert_eq!(pkt.len(), MEDIA_QUERY_SIZE);
         assert_eq!(&pkt[..MAGIC_HEADER.len()], &MAGIC_HEADER);
@@ -500,11 +492,7 @@ mod tests {
 
     #[test]
     fn build_query_encodes_devices_and_slot() {
-        let pkt = build_media_query(
-            DeviceNumber(1),
-            DeviceNumber(4),
-            TrackSourceSlot::SdSlot,
-        );
+        let pkt = build_media_query(DeviceNumber(1), DeviceNumber(4), TrackSourceSlot::SdSlot);
 
         assert_eq!(pkt[0x21], 1); // source
         assert_eq!(pkt[0x22], 4); // target
@@ -555,8 +543,16 @@ mod tests {
     #[test]
     fn parse_creation_date() {
         let mut pkt = make_media_details_packet(
-            1, 3, 3, &ascii_to_utf16("USB"), 100, 5, 0, true,
-            1_000_000, 500_000,
+            1,
+            3,
+            3,
+            &ascii_to_utf16("USB"),
+            100,
+            5,
+            0,
+            true,
+            1_000_000,
+            500_000,
         );
         // Write a UTF-16BE creation date at CREATION_DATE_OFFSET with null terminator
         let date_units = ascii_to_utf16("2024-03-15");
@@ -581,9 +577,7 @@ mod tests {
     #[test]
     fn parse_creation_date_empty() {
         // Default packet has zeros at CREATION_DATE_OFFSET → empty string
-        let pkt = make_media_details_packet(
-            1, 3, 3, &[], 0, 0, 0, false, 0, 0,
-        );
+        let pkt = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
         let md = parse_media_details(&pkt).unwrap();
         assert_eq!(md.creation_date, "");
     }

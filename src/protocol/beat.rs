@@ -3,7 +3,9 @@ use std::time::Instant;
 use crate::device::types::{Bpm, DeviceNumber, DeviceType, Pitch};
 use crate::error::{ProDjLinkError, Result};
 use crate::protocol::command::FaderAction;
-use crate::protocol::header::{parse_header, parse_header_on_port, PacketType, BEAT_PORT, MAGIC_HEADER};
+use crate::protocol::header::{
+    BEAT_PORT, MAGIC_HEADER, PacketType, parse_header, parse_header_on_port,
+};
 use crate::util::{bytes_to_number, read_device_name};
 
 /// Beat packets are exactly 0x60 bytes.
@@ -272,11 +274,7 @@ pub fn build_beat(
 ///
 /// `channels[0]` corresponds to channel 1, up to `channels[3]` for channel 4.
 /// Non-zero flag means "on-air".
-pub fn build_on_air(
-    name: &str,
-    device: DeviceNumber,
-    channels: &[bool; 4],
-) -> Vec<u8> {
+pub fn build_on_air(name: &str, device: DeviceNumber, channels: &[bool; 4]) -> Vec<u8> {
     let total = 0x24 + 4; // prefix + 4 channel bytes
     let mut pkt = vec![0u8; total];
 
@@ -520,7 +518,13 @@ mod tests {
         beat_in_bar: u8,
     ) -> Vec<u8> {
         make_beat_packet_with_timing(
-            name, device_num, device_type, bpm_hundredths, pitch_raw, beat_in_bar, [0; 6],
+            name,
+            device_num,
+            device_type,
+            bpm_hundredths,
+            pitch_raw,
+            beat_in_bar,
+            [0; 6],
         )
     }
 
@@ -554,8 +558,12 @@ mod tests {
         pkt[BEAT_WITHIN_BAR_OFFSET] = beat_in_bar;
 
         let timing_offsets = [
-            NEXT_BEAT_OFFSET, SECOND_BEAT_OFFSET, NEXT_BAR_OFFSET,
-            FOURTH_BEAT_OFFSET, SECOND_BAR_OFFSET, EIGHTH_BEAT_OFFSET,
+            NEXT_BEAT_OFFSET,
+            SECOND_BEAT_OFFSET,
+            NEXT_BAR_OFFSET,
+            FOURTH_BEAT_OFFSET,
+            SECOND_BAR_OFFSET,
+            EIGHTH_BEAT_OFFSET,
         ];
         for (off, val) in timing_offsets.iter().zip(timing.iter()) {
             pkt[*off..*off + 4].copy_from_slice(&val.to_be_bytes());
@@ -586,12 +594,9 @@ mod tests {
 
         pkt[PP_TRACK_LENGTH_OFFSET..PP_TRACK_LENGTH_OFFSET + 4]
             .copy_from_slice(&track_length.to_be_bytes());
-        pkt[PP_POSITION_OFFSET..PP_POSITION_OFFSET + 4]
-            .copy_from_slice(&position_ms.to_be_bytes());
-        pkt[PP_PITCH_OFFSET..PP_PITCH_OFFSET + 4]
-            .copy_from_slice(&raw_pitch_pct100.to_be_bytes());
-        pkt[PP_BPM_OFFSET..PP_BPM_OFFSET + 4]
-            .copy_from_slice(&raw_bpm_tenths.to_be_bytes());
+        pkt[PP_POSITION_OFFSET..PP_POSITION_OFFSET + 4].copy_from_slice(&position_ms.to_be_bytes());
+        pkt[PP_PITCH_OFFSET..PP_PITCH_OFFSET + 4].copy_from_slice(&raw_pitch_pct100.to_be_bytes());
+        pkt[PP_BPM_OFFSET..PP_BPM_OFFSET + 4].copy_from_slice(&raw_bpm_tenths.to_be_bytes());
         pkt
     }
 
@@ -810,8 +815,7 @@ mod tests {
             .copy_from_slice(&name_bytes[..copy_len]);
 
         pkt[DEVICE_NUMBER_OFFSET] = device_num;
-        pkt[CHANNEL_FLAGS_OFFSET..CHANNEL_FLAGS_OFFSET + flags.len()]
-            .copy_from_slice(flags);
+        pkt[CHANNEL_FLAGS_OFFSET..CHANNEL_FLAGS_OFFSET + flags.len()].copy_from_slice(flags);
         pkt
     }
 
@@ -1038,7 +1042,12 @@ mod tests {
         use crate::protocol::command::build_fader_start;
         let pkt = build_fader_start(
             DeviceNumber(5),
-            [FaderAction::Start, FaderAction::Stop, FaderAction::NoChange, FaderAction::Start],
+            [
+                FaderAction::Start,
+                FaderAction::Stop,
+                FaderAction::NoChange,
+                FaderAction::Start,
+            ],
         );
         let evt = parse_fader_start(&pkt).unwrap();
         assert_eq!(evt.device_number, DeviceNumber(5));
