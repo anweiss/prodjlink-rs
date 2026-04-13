@@ -98,6 +98,27 @@ impl BeatGrid {
         }
     }
 
+    /// Find the last beat at or before the given time (floor semantics).
+    ///
+    /// This matches Java's `findBeatAtTime()` behavior — returns the index
+    /// of the last beat whose time is ≤ the given time, or `None` if there
+    /// are no beats or the time is before the first beat.
+    pub fn find_beat_at_time(&self, time_ms: u32) -> Option<usize> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        match self.entries.binary_search_by_key(&time_ms, |e| e.time_ms) {
+            Ok(idx) => Some(idx),
+            Err(idx) => {
+                if idx == 0 {
+                    None
+                } else {
+                    Some(idx - 1)
+                }
+            }
+        }
+    }
+
     /// Get the time in ms of the Nth beat (0-indexed).
     pub fn time_of_beat(&self, beat_index: usize) -> Option<u32> {
         self.entries.get(beat_index).map(|e| e.time_ms)
@@ -442,5 +463,44 @@ mod tests {
         let data = make_beat_grid_data(&[(1, 12800, 0)]);
         let grid = BeatGrid::from_bytes(&data).unwrap();
         assert!(grid.time_within_track(10).is_none());
+    }
+
+    // --- find_beat_at_time (floor semantics) tests ---
+
+    #[test]
+    fn find_beat_at_time_exact_match() {
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 500), (3, 12800, 1000)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.find_beat_at_time(500), Some(1));
+    }
+
+    #[test]
+    fn find_beat_at_time_between_beats() {
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 500), (3, 12800, 1000)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        // Should return the beat BEFORE (floor), not nearest
+        assert_eq!(grid.find_beat_at_time(750), Some(1));
+        assert_eq!(grid.find_beat_at_time(999), Some(1));
+        assert_eq!(grid.find_beat_at_time(1), Some(0));
+    }
+
+    #[test]
+    fn find_beat_at_time_before_first_beat() {
+        let data = make_beat_grid_data(&[(1, 12800, 100), (2, 12800, 500)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.find_beat_at_time(50), None);
+    }
+
+    #[test]
+    fn find_beat_at_time_after_last_beat() {
+        let data = make_beat_grid_data(&[(1, 12800, 0), (2, 12800, 500)]);
+        let grid = BeatGrid::from_bytes(&data).unwrap();
+        assert_eq!(grid.find_beat_at_time(9999), Some(1));
+    }
+
+    #[test]
+    fn find_beat_at_time_empty_grid() {
+        let grid = BeatGrid::from_bytes(&[0u8; HEADER_SIZE]).unwrap();
+        assert_eq!(grid.find_beat_at_time(100), None);
     }
 }

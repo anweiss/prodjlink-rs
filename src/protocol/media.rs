@@ -8,7 +8,7 @@
 //! dysentery protocol analysis. Where exact offsets are uncertain they are
 //! marked with comments.
 
-use crate::device::types::{DeviceNumber, TrackSourceSlot};
+use crate::device::types::{DeviceNumber, SlotReference, TrackSourceSlot};
 use crate::error::{ProDjLinkError, Result};
 use crate::protocol::header::MAGIC_HEADER;
 use crate::util::bytes_to_number;
@@ -125,6 +125,34 @@ pub struct MediaDetails {
     pub has_my_settings: Option<bool>,
     /// Minimum usable size in bytes, if present in the packet.
     pub min_size: Option<u64>,
+}
+
+impl MediaDetails {
+    /// Get a [`SlotReference`] for this media's player and slot.
+    pub fn slot_reference(&self) -> SlotReference {
+        SlotReference {
+            player: self.player,
+            slot: self.slot,
+        }
+    }
+
+    /// Produce a fingerprint key for this mounted media.
+    ///
+    /// The key encodes name, track count, playlist count, total size, and
+    /// free space so it can be used to detect when media has been swapped
+    /// even if the same slot is reused.
+    pub fn hash_key(&self) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            self.name, self.track_count, self.playlist_count, self.total_size, self.free_space
+        )
+    }
+
+    /// Returns `true` if the given `other` details represent different media
+    /// (i.e. the hash key has changed).
+    pub fn has_changed(&self, other: &MediaDetails) -> bool {
+        self.hash_key() != other.hash_key()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,5 +655,47 @@ mod tests {
         let pkt = make_media_details_packet(1, 3, 3, &[], 0, 0, 0, false, 0, 0);
         let md = parse_media_details(&pkt).unwrap();
         assert!(md.min_size.is_none());
+    }
+
+    // --- MediaDetails convenience method tests ---
+
+    #[test]
+    fn slot_reference_accessor() {
+        let name: Vec<u16> = "USB1".encode_utf16().collect();
+        let pkt = make_media_details_packet(2, 3, 3, &name, 10, 2, 0, true, 0, 0);
+        let md = parse_media_details(&pkt).unwrap();
+        let sr = md.slot_reference();
+        assert_eq!(sr.player, md.player);
+        assert_eq!(sr.slot, md.slot);
+    }
+
+    #[test]
+    fn hash_key_deterministic() {
+        let name: Vec<u16> = "MyUSB".encode_utf16().collect();
+        let pkt = make_media_details_packet(1, 3, 3, &name, 42, 5, 0, true, 1_000_000, 500_000);
+        let md = parse_media_details(&pkt).unwrap();
+        let key1 = md.hash_key();
+        let key2 = md.hash_key();
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn has_changed_detects_different_media() {
+        let name_a: Vec<u16> = "USB-A".encode_utf16().collect();
+        let name_b: Vec<u16> = "USB-B".encode_utf16().collect();
+        let pkt1 = make_media_details_packet(1, 3, 3, &name_a, 100, 5, 0, true, 0, 0);
+        let pkt2 = make_media_details_packet(1, 3, 3, &name_b, 200, 10, 0, true, 0, 0);
+        let md1 = parse_media_details(&pkt1).unwrap();
+        let md2 = parse_media_details(&pkt2).unwrap();
+        assert!(md1.has_changed(&md2));
+    }
+
+    #[test]
+    fn has_changed_same_media() {
+        let name: Vec<u16> = "USB-A".encode_utf16().collect();
+        let pkt = make_media_details_packet(1, 3, 3, &name, 100, 5, 0, true, 0, 0);
+        let md1 = parse_media_details(&pkt).unwrap();
+        let md2 = parse_media_details(&pkt).unwrap();
+        assert!(!md1.has_changed(&md2));
     }
 }
