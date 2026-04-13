@@ -14,20 +14,24 @@ pub mod util;
 
 // Core types
 pub use device::types::{
-    BeatNumber, Bpm, DeviceNumber, DeviceType, OnAirStatus, Pitch, PlayState, PlayState2,
-    PlayState3, TrackSourceSlot, TrackType,
+    BeatNumber, Bpm, DeviceNumber, DeviceType, OnAirStatus, OpusQuadMode, Pitch, PlayState,
+    PlayState2, PlayState3, TrackSourceSlot, TrackType,
+    remap_opus_quad_device, unmap_opus_quad_device,
 };
 pub use error::{ProDjLinkError, Result};
 
 // Protocol types
 pub use protocol::announce::DeviceAnnouncement;
 pub use protocol::beat::{Beat, ChannelsOnAir, PrecisePosition};
-pub use protocol::status::{CdjStatus, DeviceUpdate, MixerStatus};
+pub use protocol::status::{
+    CdjStatus, CdjStatusBuilder, CdjStatusFlags, DeviceUpdate, MixerStatus,
+};
 
 // Network services
 pub use network::beat::{BeatEvent, BeatFinder};
 pub use network::finder::{DeviceFinder, FinderEvent};
 pub use network::status::StatusListener;
+pub use network::tempo::{MasterState, TempoMaster, TempoMasterEvent};
 pub use network::virtual_cdj::{VirtualCdj, VirtualCdjConfig};
 
 // Data types

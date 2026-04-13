@@ -293,6 +293,29 @@ pub fn extract_claim_stage2_device_number(data: &[u8]) -> Option<u8> {
     }
 }
 
+/// Expand a single Opus Quad keep-alive into 4 synthetic player announcements.
+///
+/// The Opus Quad is an all-in-one unit whose real device number is 9–12
+/// (or 17–20 in lighting mode).  This function takes the original
+/// announcement and returns four copies with device numbers remapped to
+/// 1–4, preserving all other fields.
+///
+/// If the announcement is *not* from an Opus Quad the returned vec contains
+/// only the original announcement unchanged.
+pub fn expand_opus_quad_announcement(ann: &DeviceAnnouncement) -> Vec<DeviceAnnouncement> {
+    if !ann.is_opus_quad {
+        return vec![ann.clone()];
+    }
+
+    (1u8..=4)
+        .map(|player| {
+            let mut synth = ann.clone();
+            synth.number = DeviceNumber(player);
+            synth
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +629,54 @@ mod tests {
             assert_eq!(pkt[0x24], 5);
             assert_eq!(pkt[0x25], counter);
         }
+    }
+
+    // === Opus Quad Expansion Tests ===
+
+    #[test]
+    fn expand_opus_quad_creates_four_players() {
+        let mac = [0x00; 6];
+        let ip = [192, 168, 1, 1];
+        let pkt = make_keep_alive_packet("OPUS-QUAD", 9, 1, mac, ip);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(ann.is_opus_quad);
+
+        let expanded = expand_opus_quad_announcement(&ann);
+        assert_eq!(expanded.len(), 4);
+        for (i, player) in expanded.iter().enumerate() {
+            assert_eq!(player.number, DeviceNumber((i + 1) as u8));
+            assert_eq!(player.name, "OPUS-QUAD");
+            assert!(player.is_opus_quad);
+            assert_eq!(player.ip_address, Ipv4Addr::new(192, 168, 1, 1));
+            assert_eq!(player.mac_address, mac);
+        }
+    }
+
+    #[test]
+    fn expand_non_opus_quad_returns_unchanged() {
+        let mac = [0xAA; 6];
+        let ip = [10, 0, 0, 1];
+        let pkt = make_keep_alive_packet("CDJ-3000", 2, 1, mac, ip);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(!ann.is_opus_quad);
+
+        let expanded = expand_opus_quad_announcement(&ann);
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].number, DeviceNumber(2));
+        assert_eq!(expanded[0].name, "CDJ-3000");
+    }
+
+    #[test]
+    fn expand_xdj_az_returns_unchanged() {
+        let mac = [0x00; 6];
+        let ip = [192, 168, 1, 2];
+        let pkt = make_keep_alive_packet("XDJ-AZ", 5, 1, mac, ip);
+        let ann = parse_keep_alive(&pkt).unwrap();
+        assert!(ann.is_xdj_az);
+        assert!(!ann.is_opus_quad);
+
+        let expanded = expand_opus_quad_announcement(&ann);
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].name, "XDJ-AZ");
     }
 }

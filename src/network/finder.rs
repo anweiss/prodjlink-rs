@@ -10,8 +10,8 @@ use tokio::task::JoinHandle;
 use crate::device::types::DeviceNumber;
 use crate::error::Result;
 use crate::protocol::announce::{
-    extract_claim_stage2_device_number, extract_defense_device_number, parse_keep_alive,
-    DeviceAnnouncement,
+    expand_opus_quad_announcement, extract_claim_stage2_device_number,
+    extract_defense_device_number, parse_keep_alive, DeviceAnnouncement,
 };
 use crate::protocol::header::{parse_header, PacketType, DISCOVERY_PORT};
 
@@ -76,16 +76,20 @@ impl DeviceFinder {
                             match pkt_type {
                                 PacketType::DeviceKeepAlive => {
                                     if let Ok(announcement) = parse_keep_alive(data) {
-                                        let key = announcement.number.0;
+                                        let announcements =
+                                            expand_opus_quad_announcement(&announcement);
                                         let mut map = recv_devices.write().await;
-                                        let is_new = !map.contains_key(&key);
-                                        map.insert(key, announcement.clone());
-                                        let event = if is_new {
-                                            FinderEvent::DeviceFound(announcement)
-                                        } else {
-                                            FinderEvent::DeviceUpdated(announcement)
-                                        };
-                                        let _ = recv_tx.send(event);
+                                        for ann in announcements {
+                                            let key = ann.number.0;
+                                            let is_new = !map.contains_key(&key);
+                                            map.insert(key, ann.clone());
+                                            let event = if is_new {
+                                                FinderEvent::DeviceFound(ann)
+                                            } else {
+                                                FinderEvent::DeviceUpdated(ann)
+                                            };
+                                            let _ = recv_tx.send(event);
+                                        }
                                     }
                                 }
                                 PacketType::DeviceDefense => {

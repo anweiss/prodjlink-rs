@@ -3,7 +3,7 @@ use std::time::Instant;
 use crate::device::types::*;
 use crate::error::{ProDjLinkError, Result};
 use crate::protocol::header::{self, PacketType, STATUS_PORT};
-use crate::util::{bytes_to_number, read_device_name};
+use crate::util::{bytes_to_number, number_to_bytes, read_device_name};
 
 // Minimum packet sizes
 const MIN_CDJ_STATUS_LEN: usize = 0xCC;
@@ -146,12 +146,12 @@ impl CdjStatus {
     ///
     /// For nexus-era packets (≥ 0xd4 bytes) this uses the flag bit at 0x89.
     /// For pre-nexus packets the flag byte is unreliable so we fall back to
-    /// checking PlayState == Playing **and** PlayState2 == Moving.
+    /// checking PlayState == Playing **and** PlayState2 is moving.
     pub fn is_playing(&self) -> bool {
         if self.packet_length >= 0xd4 {
             self.is_playing_flag
         } else {
-            self.play_state == PlayState::Playing && self.play_state_2 == PlayState2::Moving
+            self.play_state == PlayState::Playing && self.play_state_2.is_moving()
         }
     }
 
@@ -207,6 +207,34 @@ impl CdjStatus {
     /// Whether the local SD slot is empty.
     pub fn is_local_sd_empty(&self) -> bool {
         self.local_sd_state == 0
+    }
+
+    /// Whether this status packet appears to originate from an Opus Quad.
+    ///
+    /// Detection is based on the device name containing "OPUS-QUAD".
+    pub fn is_opus_quad(&self) -> bool {
+        self.name.contains("OPUS-QUAD")
+    }
+
+    /// Whether the status flags in this packet are reliable.
+    ///
+    /// The Opus Quad has a firmware bug where status flags are sometimes
+    /// "replayed" from a previous state.  We detect this by checking whether
+    /// the firmware-version bytes (0x7c–0x7f) look like an Opus Quad *and*
+    /// the packet counter has wrapped in an unexpected way (low-order byte
+    /// is zero while the overall counter is non-zero, which indicates a
+    /// replayed packet).
+    pub fn are_flags_reliable(&self) -> bool {
+        if !self.is_opus_quad() {
+            return true;
+        }
+        // Heuristic: a replayed packet has a non-zero counter whose low byte
+        // is zero, indicating the counter jumped rather than incremented
+        // normally.
+        if self.packet_number != 0 && (self.packet_number & 0xFF) == 0 {
+            return false;
+        }
+        true
     }
 }
 
@@ -417,6 +445,147 @@ pub fn parse_status(data: &[u8]) -> Result<DeviceUpdate> {
             ptype
         ))),
     }
+}
+
+// -----------------------------------------------------------------------
+// CDJ status packet builder
+// -----------------------------------------------------------------------
+
+/// Flags that can be set in the CDJ status flags byte at offset 0x89.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CdjStatusFlags {
+    pub playing: bool,
+    pub master: bool,
+    pub synced: bool,
+    pub on_air: bool,
+    pub bpm_sync: bool,
+}
+
+impl CdjStatusFlags {
+    fn to_byte(self) -> u8 {
+        let mut f = 0u8;
+        if self.playing {
+            f |= FLAG_PLAYING;
+        }
+        if self.master {
+            f |= FLAG_MASTER;
+        }
+        if self.synced {
+            f |= FLAG_SYNCED;
+        }
+        if self.on_air {
+            f |= FLAG_ON_AIR;
+        }
+        if self.bpm_sync {
+            f |= FLAG_BPM_SYNC;
+        }
+        f
+    }
+
+    /// Build flags from a raw byte.
+    pub fn from_byte(b: u8) -> Self {
+        Self {
+            playing: b & FLAG_PLAYING != 0,
+            master: b & FLAG_MASTER != 0,
+            synced: b & FLAG_SYNCED != 0,
+            on_air: b & FLAG_ON_AIR != 0,
+            bpm_sync: b & FLAG_BPM_SYNC != 0,
+        }
+    }
+}
+
+/// Parameters for building a CDJ status packet.
+#[derive(Debug, Clone)]
+pub struct CdjStatusBuilder {
+    pub device_name: String,
+    pub device_number: DeviceNumber,
+    pub flags: CdjStatusFlags,
+    /// Track BPM (before pitch). Encoded as `bpm * 100` in the packet.
+    pub bpm: Bpm,
+    /// Raw pitch value (0x100000 = normal speed).
+    pub pitch: Pitch,
+    /// Beat number within the track (0xFFFFFFFF = unknown).
+    pub beat_number: Option<u32>,
+    /// Beat within bar (1–4).
+    pub beat_within_bar: u8,
+    /// Device number being yielded to, or `None` (encoded as 0xFF).
+    pub master_hand_off: Option<u8>,
+    /// Packet sequence number.
+    pub packet_number: u32,
+}
+
+impl Default for CdjStatusBuilder {
+    fn default() -> Self {
+        Self {
+            device_name: "prodjlink-rs".to_string(),
+            device_number: DeviceNumber(5),
+            flags: CdjStatusFlags::default(),
+            bpm: Bpm(0.0),
+            pitch: Pitch(0x100000),
+            beat_number: None,
+            beat_within_bar: 1,
+            master_hand_off: None,
+            packet_number: 0,
+        }
+    }
+}
+
+/// Build a CdjStatus packet (type 0x0a) suitable for broadcast on port 50002.
+///
+/// The returned packet is at least 0xCC bytes (nexus-era minimum) and can be
+/// parsed back with [`parse_cdj_status`].
+pub fn build_cdj_status(params: &CdjStatusBuilder) -> Vec<u8> {
+    let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+
+    // Magic header
+    pkt[..10].copy_from_slice(&header::MAGIC_HEADER);
+
+    // Packet type = CdjStatus (0x0a on status port)
+    pkt[0x0a] = 0x0a;
+
+    // Device name (null-padded to 20 bytes)
+    let name_bytes = params.device_name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    // Device number and type
+    pkt[DEVICE_NUMBER_OFFSET] = params.device_number.0;
+    pkt[DEVICE_TYPE_OFFSET] = 1; // CDJ
+
+    // Flags byte
+    pkt[FLAGS_OFFSET] = params.flags.to_byte();
+
+    // BPM (2 bytes, value × 100)
+    let bpm_raw = (params.bpm.0 * 100.0) as u32;
+    number_to_bytes(bpm_raw, &mut pkt, BPM_OFFSET, 2);
+
+    // Pitch (3 bytes)
+    let pitch_be = (params.pitch.0 as u32).to_be_bytes();
+    pkt[PITCH_OFFSET..PITCH_OFFSET + PITCH_LEN].copy_from_slice(&pitch_be[1..4]);
+
+    // Beat number (4 bytes, 0xFFFFFFFF = unknown)
+    let beat_raw = params.beat_number.unwrap_or(0xFFFFFFFF);
+    number_to_bytes(beat_raw, &mut pkt, BEAT_NUMBER_OFFSET, 4);
+
+    // Beat within bar
+    pkt[BEAT_WITHIN_BAR_OFFSET] = params.beat_within_bar;
+
+    // Master hand-off
+    pkt[MASTER_HAND_OFF_OFFSET] = params.master_hand_off.unwrap_or(NO_HAND_OFF);
+
+    // Play state 2 — set to Stopped (0x6e) by default; override if playing
+    pkt[PLAY_STATE_2_OFFSET] = if params.flags.playing { 0x6a } else { 0x6e };
+
+    // Cue countdown sentinel
+    pkt[CUE_COUNTDOWN_OFFSET] = 0x01;
+    pkt[CUE_COUNTDOWN_OFFSET + 1] = 0xFF;
+
+    // Packet number (4 bytes at 0xC8)
+    if pkt.len() >= PACKET_NUMBER_OFFSET + 4 {
+        number_to_bytes(params.packet_number, &mut pkt, PACKET_NUMBER_OFFSET, 4);
+    }
+
+    pkt
 }
 
 #[cfg(test)]
@@ -719,7 +888,14 @@ mod tests {
     fn play_state_2_moving_variants() {
         assert_eq!(PlayState2::from(0x6a), PlayState2::Moving);
         assert_eq!(PlayState2::from(0x7a), PlayState2::Moving);
-        assert_eq!(PlayState2::from(0xfa), PlayState2::Moving);
+    }
+
+    #[test]
+    fn play_state_2_opus_moving() {
+        assert_eq!(PlayState2::from(0xfa), PlayState2::OpusMoving);
+        assert!(PlayState2::OpusMoving.is_moving());
+        assert!(PlayState2::Moving.is_moving());
+        assert!(!PlayState2::Stopped.is_moving());
     }
 
     #[test]
@@ -975,5 +1151,268 @@ mod tests {
         pkt[PACKET_NUMBER_OFFSET + 3] = 0x00;
         let s = parse_cdj_status(&pkt).unwrap();
         assert_eq!(s.packet_number, 256);
+    }
+
+    // -- Opus Quad status tests --
+
+    /// Helper: make a CDJ status packet that looks like it came from an Opus Quad.
+    fn make_opus_quad_cdj_packet() -> Vec<u8> {
+        let mut pkt = make_cdj_packet();
+        // Overwrite name with OPUS-QUAD
+        let name = b"OPUS-QUAD";
+        pkt[NAME_OFFSET..NAME_OFFSET + name.len()].copy_from_slice(name);
+        // Zero out rest of name field
+        for i in NAME_OFFSET + name.len()..NAME_OFFSET + NAME_LEN {
+            pkt[i] = 0;
+        }
+        pkt
+    }
+
+    #[test]
+    fn cdj_status_is_opus_quad_true() {
+        let pkt = make_opus_quad_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.is_opus_quad());
+    }
+
+    #[test]
+    fn cdj_status_is_opus_quad_false() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.is_opus_quad());
+    }
+
+    #[test]
+    fn cdj_status_flags_reliable_for_normal_cdj() {
+        let pkt = make_cdj_packet();
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.are_flags_reliable());
+    }
+
+    #[test]
+    fn cdj_status_flags_reliable_for_opus_quad_normal_counter() {
+        let mut pkt = make_opus_quad_cdj_packet();
+        // Normal counter value: 42
+        pkt[PACKET_NUMBER_OFFSET] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 1] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 2] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 3] = 42;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.are_flags_reliable());
+    }
+
+    #[test]
+    fn cdj_status_flags_unreliable_for_opus_quad_replayed() {
+        let mut pkt = make_opus_quad_cdj_packet();
+        // Suspect counter: non-zero but low byte is 0 (e.g. 0x00000100)
+        pkt[PACKET_NUMBER_OFFSET] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 1] = 0x00;
+        pkt[PACKET_NUMBER_OFFSET + 2] = 0x01;
+        pkt[PACKET_NUMBER_OFFSET + 3] = 0x00;
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(!s.are_flags_reliable());
+    }
+
+    #[test]
+    fn cdj_status_flags_reliable_for_opus_quad_counter_zero() {
+        let pkt = make_opus_quad_cdj_packet();
+        // Counter = 0 is OK (initial state)
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(s.packet_number, 0);
+        assert!(s.are_flags_reliable());
+    }
+
+    #[test]
+    fn play_state_2_opus_moving_in_is_playing_fallback() {
+        // Pre-nexus sized packet with OpusMoving state
+        let mut pkt = vec![0u8; MIN_CDJ_STATUS_LEN];
+        let base = make_cdj_packet();
+        pkt.copy_from_slice(&base[..MIN_CDJ_STATUS_LEN]);
+        pkt[FLAGS_OFFSET] = 0; // clear flag
+        pkt[PLAY_STATE_OFFSET] = 0x03; // Playing
+        pkt[PLAY_STATE_2_OFFSET] = 0xfa; // OpusMoving
+        let s = parse_cdj_status(&pkt).unwrap();
+        assert!(s.packet_length < 0xd4);
+        assert!(s.play_state_2.is_moving());
+        assert!(s.is_playing());
+    }
+
+    // -- build_cdj_status tests --
+
+    #[test]
+    fn build_cdj_status_minimum_size() {
+        let pkt = build_cdj_status(&CdjStatusBuilder::default());
+        assert_eq!(pkt.len(), MIN_CDJ_STATUS_LEN);
+    }
+
+    #[test]
+    fn build_cdj_status_has_magic_header() {
+        let pkt = build_cdj_status(&CdjStatusBuilder::default());
+        assert_eq!(&pkt[..10], &MAGIC_HEADER);
+    }
+
+    #[test]
+    fn build_cdj_status_type_byte() {
+        let pkt = build_cdj_status(&CdjStatusBuilder::default());
+        assert_eq!(pkt[0x0a], 0x0a);
+    }
+
+    #[test]
+    fn build_cdj_status_device_name() {
+        let params = CdjStatusBuilder {
+            device_name: "TestPlayer".to_string(),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        let name = read_device_name(&pkt, NAME_OFFSET, NAME_LEN);
+        assert_eq!(name, "TestPlayer");
+    }
+
+    #[test]
+    fn build_cdj_status_device_number() {
+        let params = CdjStatusBuilder {
+            device_number: DeviceNumber(3),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        assert_eq!(pkt[DEVICE_NUMBER_OFFSET], 3);
+    }
+
+    #[test]
+    fn build_cdj_status_flags_all_set() {
+        let params = CdjStatusBuilder {
+            flags: CdjStatusFlags {
+                playing: true,
+                master: true,
+                synced: true,
+                on_air: true,
+                bpm_sync: true,
+            },
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        let flags = pkt[FLAGS_OFFSET];
+        assert_ne!(flags & FLAG_PLAYING, 0);
+        assert_ne!(flags & FLAG_MASTER, 0);
+        assert_ne!(flags & FLAG_SYNCED, 0);
+        assert_ne!(flags & FLAG_ON_AIR, 0);
+        assert_ne!(flags & FLAG_BPM_SYNC, 0);
+    }
+
+    #[test]
+    fn build_cdj_status_flags_master_only() {
+        let params = CdjStatusBuilder {
+            flags: CdjStatusFlags {
+                master: true,
+                ..CdjStatusFlags::default()
+            },
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        assert_eq!(pkt[FLAGS_OFFSET], FLAG_MASTER);
+    }
+
+    #[test]
+    fn build_cdj_status_bpm() {
+        let params = CdjStatusBuilder {
+            bpm: Bpm(128.0),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        let raw = bytes_to_number(&pkt, BPM_OFFSET, 2);
+        assert_eq!(raw, 12800);
+    }
+
+    #[test]
+    fn build_cdj_status_pitch() {
+        let params = CdjStatusBuilder {
+            pitch: Pitch(0x100000),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        let raw = bytes_to_number(&pkt, PITCH_OFFSET, PITCH_LEN);
+        assert_eq!(raw, 0x100000);
+    }
+
+    #[test]
+    fn build_cdj_status_master_hand_off_none() {
+        let pkt = build_cdj_status(&CdjStatusBuilder::default());
+        assert_eq!(pkt[MASTER_HAND_OFF_OFFSET], NO_HAND_OFF);
+    }
+
+    #[test]
+    fn build_cdj_status_master_hand_off_yielding() {
+        let params = CdjStatusBuilder {
+            master_hand_off: Some(3),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        assert_eq!(pkt[MASTER_HAND_OFF_OFFSET], 3);
+    }
+
+    #[test]
+    fn build_cdj_status_round_trip() {
+        let params = CdjStatusBuilder {
+            device_name: "RoundTrip".to_string(),
+            device_number: DeviceNumber(2),
+            flags: CdjStatusFlags {
+                playing: true,
+                master: true,
+                synced: true,
+                on_air: true,
+                bpm_sync: false,
+            },
+            bpm: Bpm(140.0),
+            pitch: Pitch(0x100000),
+            beat_number: Some(42),
+            beat_within_bar: 3,
+            master_hand_off: None,
+            packet_number: 99,
+        };
+        let pkt = build_cdj_status(&params);
+        let parsed = parse_cdj_status(&pkt).unwrap();
+
+        assert_eq!(parsed.name, "RoundTrip");
+        assert_eq!(parsed.device_number, DeviceNumber(2));
+        assert!(parsed.is_playing_flag);
+        assert!(parsed.is_master);
+        assert!(parsed.is_synced);
+        assert!(parsed.is_on_air);
+        assert!(!parsed.is_bpm_synced);
+        assert!((parsed.bpm.0 - 140.0).abs() < f64::EPSILON);
+        assert_eq!(parsed.pitch, Pitch(0x100000));
+        assert_eq!(parsed.beat_number, Some(BeatNumber(42)));
+        assert_eq!(parsed.beat_within_bar, 3);
+        assert!(parsed.master_hand_off.is_none());
+        assert_eq!(parsed.packet_number, 99);
+    }
+
+    #[test]
+    fn build_cdj_status_round_trip_with_handoff() {
+        let params = CdjStatusBuilder {
+            master_hand_off: Some(4),
+            ..CdjStatusBuilder::default()
+        };
+        let pkt = build_cdj_status(&params);
+        let parsed = parse_cdj_status(&pkt).unwrap();
+        assert_eq!(parsed.master_hand_off, Some(4));
+    }
+
+    #[test]
+    fn cdj_status_flags_from_byte_round_trip() {
+        let flags = CdjStatusFlags {
+            playing: true,
+            master: false,
+            synced: true,
+            on_air: false,
+            bpm_sync: true,
+        };
+        let byte = flags.to_byte();
+        let back = CdjStatusFlags::from_byte(byte);
+        assert_eq!(back.playing, true);
+        assert_eq!(back.master, false);
+        assert_eq!(back.synced, true);
+        assert_eq!(back.on_air, false);
+        assert_eq!(back.bpm_sync, true);
     }
 }
