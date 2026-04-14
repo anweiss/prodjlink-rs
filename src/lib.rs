@@ -75,6 +75,7 @@ pub use dbserver::connection::ConnectionManager;
 // ---------------------------------------------------------------------------
 
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 
 /// Builder for creating a [`ProDjLink`] session.
 ///
@@ -148,9 +149,36 @@ impl ProDjLinkBuilder {
 
         let cdj_config =
             VirtualCdjConfig::new(self.device_number, interface_addr)?.with_name(self.device_name);
-        let virtual_cdj = VirtualCdj::start(cdj_config, Some(&finder)).await?;
+        let virtual_cdj = Arc::new(VirtualCdj::start(cdj_config, Some(&finder)).await?);
 
         let connection_manager = ConnectionManager::new(self.device_number);
+
+        // Wire up status and beat events to the VirtualCdj's tempo master
+        // tracker so master_device()/master_tempo() are always up to date.
+        let vcdj_for_status = Arc::clone(&virtual_cdj);
+        let mut status_rx = status_listener.subscribe();
+        let status_task = tokio::spawn(async move {
+            loop {
+                match status_rx.recv().await {
+                    Ok(update) => vcdj_for_status.process_device_update(&update),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
+        let vcdj_for_beats = Arc::clone(&virtual_cdj);
+        let mut beat_rx = beat_finder.subscribe();
+        let beat_task = tokio::spawn(async move {
+            loop {
+                match beat_rx.recv().await {
+                    Ok(BeatEvent::NewBeat(beat)) => vcdj_for_beats.process_beat(&beat),
+                    Ok(BeatEvent::PrecisePosition(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
 
         Ok(ProDjLink {
             finder,
@@ -158,6 +186,8 @@ impl ProDjLinkBuilder {
             status_listener,
             virtual_cdj,
             connection_manager,
+            _status_task: status_task,
+            _beat_task: beat_task,
         })
     }
 }
@@ -167,8 +197,10 @@ pub struct ProDjLink {
     finder: DeviceFinder,
     beat_finder: BeatFinder,
     status_listener: StatusListener,
-    virtual_cdj: VirtualCdj,
+    virtual_cdj: Arc<VirtualCdj>,
     connection_manager: ConnectionManager,
+    _status_task: tokio::task::JoinHandle<()>,
+    _beat_task: tokio::task::JoinHandle<()>,
 }
 
 impl ProDjLink {
@@ -232,7 +264,7 @@ impl ProDjLink {
 
     /// Get a reference to the virtual CDJ for sending commands.
     pub fn virtual_cdj(&self) -> &VirtualCdj {
-        &self.virtual_cdj
+        &*self.virtual_cdj
     }
 
     // --- Connection Manager ---
@@ -246,7 +278,15 @@ impl ProDjLink {
 
     /// Shut down all services gracefully.
     pub fn shutdown(self) {
-        self.virtual_cdj.stop();
+        self._status_task.abort();
+        self._beat_task.abort();
+        match Arc::try_unwrap(self.virtual_cdj) {
+            Ok(vcdj) => vcdj.stop(),
+            Err(_arc) => {
+                // Other references still exist; tasks were already aborted
+                // so the VirtualCdj will be dropped when all refs are gone.
+            }
+        }
         self.beat_finder.stop();
         self.status_listener.stop();
         self.finder.stop();

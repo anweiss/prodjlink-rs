@@ -14,19 +14,7 @@ use crate::protocol::status::{DeviceUpdate, parse_status};
 /// `SO_REUSEPORT` so it can coexist with the command listener in
 /// [`super::virtual_cdj::VirtualCdj`].
 fn create_status_socket() -> std::io::Result<UdpSocket> {
-    let socket = socket2::Socket::new(
-        socket2::Domain::IPV4,
-        socket2::Type::DGRAM,
-        Some(socket2::Protocol::UDP),
-    )?;
-    socket.set_reuse_address(true)?;
-    #[cfg(not(windows))]
-    socket.set_reuse_port(true)?;
-    socket.set_nonblocking(true)?;
-    let addr: std::net::SocketAddr = ([0, 0, 0, 0], STATUS_PORT).into();
-    socket.bind(&addr.into())?;
-    let std_socket: std::net::UdpSocket = socket.into();
-    UdpSocket::from_std(std_socket)
+    super::create_reuseport_socket(STATUS_PORT)
 }
 
 /// Async service that listens for CDJ and mixer status updates on UDP port 50002.

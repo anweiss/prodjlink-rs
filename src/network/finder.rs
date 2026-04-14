@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashSet;
-use tokio::net::UdpSocket;
 use tokio::sync::{RwLock, broadcast};
 use tokio::task::JoinHandle;
 
@@ -58,7 +57,7 @@ pub struct DeviceFinder {
 impl DeviceFinder {
     /// Start the device finder, binding to UDP port 50000.
     pub async fn start() -> Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", DISCOVERY_PORT)).await?;
+        let socket = super::create_reuseport_socket(DISCOVERY_PORT)?;
         let socket = Arc::new(socket);
 
         let devices: Arc<RwLock<HashMap<u8, DeviceAnnouncement>>> =
@@ -215,6 +214,7 @@ mod tests {
     use crate::device::types::DeviceType;
     use crate::protocol::announce::build_keep_alive;
     use std::net::Ipv4Addr;
+    use tokio::net::UdpSocket;
 
     #[test]
     fn finder_event_variants_constructible() {

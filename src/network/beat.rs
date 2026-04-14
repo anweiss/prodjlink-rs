@@ -40,7 +40,7 @@ pub struct BeatFinder {
 impl BeatFinder {
     /// Start the beat finder, binding to UDP port 50001.
     pub async fn start() -> Result<Self> {
-        let socket = UdpSocket::bind(("0.0.0.0", BEAT_PORT)).await?;
+        let socket = super::create_reuseport_socket(BEAT_PORT)?;
         Self::start_with_socket(socket)
     }
 
