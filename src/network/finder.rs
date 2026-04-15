@@ -404,14 +404,24 @@ mod tests {
         let devs_after = finder.devices().await;
         assert!(devs_after.is_empty(), "devices should be empty after flush");
 
-        // Should receive DeviceLost event
-        let event = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
-        match event {
-            Ok(Ok(FinderEvent::DeviceLost(ann))) => {
-                assert_eq!(ann.name, "FlushTest");
+        // Drain DeviceLost events — cross-test packet leakage via
+        // SO_REUSEPORT may have registered extra devices, so we look for
+        // our specific device among all the lost events.
+        let mut found_flush_test = false;
+        loop {
+            match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
+                Ok(Ok(FinderEvent::DeviceLost(ann))) => {
+                    if ann.name == "FlushTest" {
+                        found_flush_test = true;
+                    }
+                }
+                _ => break,
             }
-            _ => {} // Acceptable if event was already consumed
         }
+        assert!(
+            found_flush_test,
+            "expected DeviceLost for FlushTest device"
+        );
 
         finder.stop();
     }
