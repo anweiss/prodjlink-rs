@@ -182,8 +182,19 @@ impl TempoMaster {
     /// Update tempo from a beat packet (beats also carry BPM).
     ///
     /// Only updates the tempo if the beat comes from the current master.
+    /// If no master has been identified via status packets, the first device
+    /// sending beats with a valid BPM is promoted as the inferred master.
+    /// This supports hardware (e.g. CDJ-3000) that sends beats but not
+    /// legacy CDJ status (0x0a) packets.
     pub fn on_beat(&self, device: DeviceNumber, bpm: Bpm) {
         let current = self.state_rx.borrow().clone();
+
+        // Infer master from beats when no status-based master is known
+        if current.master_device.is_none() && bpm.0 > 0.0 {
+            self.on_device_is_master(device, bpm);
+            return;
+        }
+
         if current.master_device == Some(device) && (current.master_tempo.0 - bpm.0).abs() > 0.001 {
             let _ = self.event_tx.send(TempoMasterEvent::TempoChanged {
                 device,

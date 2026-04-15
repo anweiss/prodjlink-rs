@@ -379,8 +379,12 @@ impl VirtualCdj {
     }
 
     /// Process an incoming Beat packet to update master tempo.
+    ///
+    /// Uses the effective (pitch-adjusted) tempo so the tracked master BPM
+    /// reflects what the audience actually hears.
     pub fn process_beat(&self, beat: &crate::protocol::beat::Beat) {
-        self.tempo_master.on_beat(beat.device_number, beat.bpm);
+        self.tempo_master
+            .on_beat(beat.device_number, Bpm(beat.effective_tempo()));
     }
 
     /// Process any [`DeviceUpdate`] to update master tracking state.
