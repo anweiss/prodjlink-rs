@@ -24,13 +24,14 @@ pub use device::types::{
 pub use error::{ProDjLinkError, Result};
 
 // Protocol types
-pub use protocol::announce::DeviceAnnouncement;
+pub use protocol::announce::{DeviceAnnouncement, build_keep_alive_typed};
 pub use protocol::beat::{
     Beat, ChannelsOnAir, FaderStartEvent, MasterHandoffEvent, PrecisePosition, SyncEvent,
     build_beat, build_on_air,
 };
 pub use protocol::status::{
-    CdjStatus, CdjStatusBuilder, CdjStatusFlags, DeviceUpdate, MixerStatus,
+    CdjStatus, CdjStatusBuilder, CdjStatusFlags, DeviceUpdate, MixerStatus, MixerStatusBuilder,
+    build_mixer_status,
 };
 
 // Settings

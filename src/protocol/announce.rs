@@ -144,6 +144,20 @@ pub fn build_keep_alive(
     pkt
 }
 
+/// Build a keep-alive packet with an explicit device type (CDJ or Mixer).
+pub fn build_keep_alive_typed(
+    name: &str,
+    device_number: DeviceNumber,
+    mac_address: [u8; 6],
+    ip_address: Ipv4Addr,
+    device_type: DeviceType,
+) -> Vec<u8> {
+    let mut pkt = build_keep_alive(name, device_number, mac_address, ip_address);
+    pkt[DEVICE_TYPE_OFFSET] = u8::from(device_type);
+    pkt[DEVICE_TYPE_MIRROR_OFFSET] = u8::from(device_type);
+    pkt
+}
+
 // ---------------------------------------------------------------------------
 // Claim & Defense Packet Builders
 // ---------------------------------------------------------------------------

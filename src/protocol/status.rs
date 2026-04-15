@@ -731,6 +731,71 @@ pub fn build_cdj_status(params: &CdjStatusBuilder) -> Vec<u8> {
     pkt
 }
 
+/// Parameters for building a mixer status packet.
+#[derive(Debug, Clone)]
+pub struct MixerStatusBuilder {
+    pub device_name: String,
+    pub device_number: DeviceNumber,
+    pub bpm: Bpm,
+    pub pitch: Pitch,
+    pub beat_within_bar: u8,
+    pub is_master: bool,
+    pub is_synced: bool,
+    pub master_hand_off: Option<u8>,
+}
+
+impl Default for MixerStatusBuilder {
+    fn default() -> Self {
+        Self {
+            device_name: "DJM-A9".to_string(),
+            device_number: DeviceNumber(33),
+            bpm: Bpm(0.0),
+            pitch: Pitch(0x100000),
+            beat_within_bar: 1,
+            is_master: false,
+            is_synced: false,
+            master_hand_off: None,
+        }
+    }
+}
+
+/// Build a MixerStatus packet (type 0x29) suitable for broadcast on port 50002.
+///
+/// The returned packet is 0x38 bytes and can be parsed back with
+/// [`parse_mixer_status`].
+pub fn build_mixer_status(params: &MixerStatusBuilder) -> Vec<u8> {
+    let mut pkt = vec![0u8; MIN_MIXER_STATUS_LEN];
+
+    pkt[..10].copy_from_slice(&header::MAGIC_HEADER);
+    pkt[0x0a] = 0x29; // MixerStatus type byte
+
+    let name_bytes = params.device_name.as_bytes();
+    let copy_len = name_bytes.len().min(NAME_LEN);
+    pkt[NAME_OFFSET..NAME_OFFSET + copy_len].copy_from_slice(&name_bytes[..copy_len]);
+
+    pkt[DEVICE_NUMBER_OFFSET] = params.device_number.0;
+
+    let mut flags: u8 = 0;
+    if params.is_master {
+        flags |= FLAG_MASTER;
+    }
+    if params.is_synced {
+        flags |= FLAG_SYNCED;
+    }
+    pkt[MIXER_FLAGS_OFFSET] = flags;
+
+    let pitch_bytes = (params.pitch.0 as u32).to_be_bytes();
+    pkt[MIXER_PITCH_OFFSET..MIXER_PITCH_OFFSET + 4].copy_from_slice(&pitch_bytes);
+
+    let bpm_raw = (params.bpm.0 * 100.0) as u32;
+    number_to_bytes(bpm_raw, &mut pkt, MIXER_BPM_OFFSET, 2);
+
+    pkt[MIXER_MASTER_HAND_OFF_OFFSET] = params.master_hand_off.unwrap_or(NO_HAND_OFF);
+    pkt[MIXER_BEAT_WITHIN_BAR_OFFSET] = params.beat_within_bar;
+
+    pkt
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
