@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::{Mutex, broadcast};
 use tokio::task::JoinHandle;
+use tracing::debug;
 
 use crate::device::settings::PlayerSettings;
 use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType};
@@ -18,7 +19,7 @@ use crate::protocol::announce::{
     build_claim_stage1, build_claim_stage2, build_claim_stage3, build_defense, build_device_hello,
     build_keep_alive,
 };
-use crate::protocol::beat::{build_beat, build_on_air};
+use crate::protocol::beat::{build_beat, build_on_air, MasterHandoffEvent};
 use crate::protocol::command::{self, FaderAction};
 use crate::protocol::header::{BEAT_PORT, DISCOVERY_PORT, MAGIC_HEADER, STATUS_PORT};
 use crate::protocol::status::{CdjStatusBuilder, CdjStatusFlags, build_cdj_status};
@@ -34,6 +35,57 @@ const FADER_START_TYPE: u8 = 0x02;
 
 /// Load-track command type byte on port 50002.
 const LOAD_TRACK_TYPE: u8 = 0x19;
+
+// ---------------------------------------------------------------------------
+// Master handoff state machine
+// ---------------------------------------------------------------------------
+
+/// State machine for the master handoff negotiation ("Baroque dance").
+///
+/// The protocol works via sync counters in status packets:
+/// 1. A device wanting master increments its sync_number above the largest seen
+/// 2. The current master sees the higher counter, enters `Yielding` state,
+///    and sets master_hand_off in its status packets
+/// 3. The requesting device sees the yield, sends a master_command on the beat port
+/// 4. The old master sees the command and completes resignation
+#[derive(Debug, Clone)]
+enum HandoffPhase {
+    /// No handoff in progress.
+    Idle,
+    /// We are requesting to become master — our sync_number is elevated.
+    /// Waiting for the current master to yield to us.
+    Requesting,
+    /// We are the current master, yielding to `target`.
+    /// Status packets include master_hand_off = target.
+    /// We keep advertising master=true until the target confirms.
+    Yielding { target: DeviceNumber },
+}
+
+/// Protocol state for the master handoff negotiation, protected by a mutex
+/// since sync_counter, largest_sync_counter, and handoff_target are interdependent.
+#[derive(Debug)]
+struct HandoffState {
+    phase: HandoffPhase,
+    /// Our sync counter value, included in status broadcasts.
+    sync_counter: u32,
+    /// Largest sync counter observed from any device on the network.
+    largest_sync_counter: u32,
+    /// Whether auto-negotiation is enabled. When true, the VirtualCdj will
+    /// automatically yield master when it sees a higher sync counter, and
+    /// automatically accept yields by sending master_command.
+    auto_negotiate: bool,
+}
+
+impl Default for HandoffState {
+    fn default() -> Self {
+        Self {
+            phase: HandoffPhase::Idle,
+            sync_counter: 1,
+            largest_sync_counter: 0,
+            auto_negotiate: false,
+        }
+    }
+}
 
 /// Events emitted when an incoming command is received on the status port.
 #[derive(Debug, Clone, PartialEq)]
@@ -144,6 +196,8 @@ pub struct VirtualCdj {
     /// Used by the status broadcast loop to avoid sending status packets
     /// too close to beat arrivals — beat timing takes priority.
     last_beat_at: Arc<AtomicU64>,
+    /// Master handoff protocol state machine.
+    handoff: Arc<Mutex<HandoffState>>,
     opus_quad_mode: bool,
     broadcast_address: Ipv4Addr,
 }
@@ -222,6 +276,7 @@ impl VirtualCdj {
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
             last_beat_at: Arc::new(AtomicU64::new(0)),
+            handoff: Arc::new(Mutex::new(HandoffState::default())),
             opus_quad_mode: false,
             broadcast_address: Ipv4Addr::BROADCAST,
         })
@@ -312,6 +367,11 @@ impl VirtualCdj {
     /// This sends the command packet and optimistically marks us as master.
     /// In a real network, the current master would first yield to us via the
     /// master_handoff byte, and we'd confirm by sending this command.
+    /// Request the master role by sending a master command on the beat port.
+    ///
+    /// This is a **force-claim**: it sends the command immediately without
+    /// participating in the sync counter negotiation. Use
+    /// [`request_master_role_negotiated`] for the full baroque dance.
     pub async fn request_master_role(&self, bpm: Bpm) -> Result<()> {
         let packet = command::build_master_command(self.config.device_number);
         self.send_beat_command(&packet).await?;
@@ -326,6 +386,42 @@ impl VirtualCdj {
     /// (the caller should set the handoff byte in subsequent status broadcasts).
     pub fn yield_master_role(&self) {
         self.tempo_master.resign_master();
+    }
+
+    /// Enable or disable automatic master handoff negotiation.
+    ///
+    /// When enabled, the VirtualCdj will:
+    /// - Automatically yield master when it sees a device with a higher sync counter
+    /// - Automatically accept yields by sending a master_command when another device
+    ///   sets `master_hand_off` targeting us
+    pub async fn set_auto_negotiate(&self, enabled: bool) {
+        let mut state = self.handoff.lock().await;
+        state.auto_negotiate = enabled;
+    }
+
+    /// Whether automatic master handoff negotiation is enabled.
+    pub async fn is_auto_negotiate(&self) -> bool {
+        let state = self.handoff.lock().await;
+        state.auto_negotiate
+    }
+
+    /// Request master role via the full sync counter negotiation.
+    ///
+    /// Increments our sync counter above the largest seen, entering
+    /// [`HandoffPhase::Requesting`]. The current master should see our
+    /// elevated counter and yield to us. When they do (via `master_hand_off`),
+    /// we send the confirming master_command and become master.
+    ///
+    /// This requires [`set_auto_negotiate(true)`] to complete the handoff
+    /// automatically.
+    pub async fn request_master_role_negotiated(&self) {
+        let mut state = self.handoff.lock().await;
+        state.sync_counter = state.largest_sync_counter + 1;
+        state.phase = HandoffPhase::Requesting;
+        debug!(
+            sync_counter = state.sync_counter,
+            "requesting master via negotiation"
+        );
     }
 
     /// Set our reported BPM.
@@ -351,9 +447,10 @@ impl VirtualCdj {
     /// Process an incoming CdjStatus to update master tracking state.
     ///
     /// Call this when a status packet arrives from the network. It updates
-    /// which device is master, the current BPM, and detects master handoff
-    /// requests targeting us.
-    pub fn process_cdj_status(&self, status: &crate::protocol::status::CdjStatus) {
+    /// which device is master, the current BPM, tracks sync counters for
+    /// master handoff negotiation, and auto-yields when another device's
+    /// sync counter exceeds ours (if auto-negotiate is enabled).
+    pub async fn process_cdj_status(&self, status: &crate::protocol::status::CdjStatus) {
         if status.is_master {
             self.tempo_master
                 .on_device_is_master(status.device_number, status.bpm);
@@ -364,12 +461,50 @@ impl VirtualCdj {
             if target == self.config.device_number.0 {
                 self.tempo_master
                     .on_master_yielded_to_us(status.device_number);
+
+                // Auto-accept: send master_command and become master
+                let mut state = self.handoff.lock().await;
+                if state.auto_negotiate {
+                    let packet = command::build_master_command(self.config.device_number);
+                    let addr = SocketAddr::new(
+                        Ipv4Addr::BROADCAST.into(),
+                        BEAT_PORT,
+                    );
+                    let _ = self.beat_socket.send_to(&packet, addr).await;
+                    self.tempo_master.set_we_are_master(status.bpm);
+                    state.phase = HandoffPhase::Idle;
+                    debug!(device = self.config.device_number.0, "auto-accepted master yield");
+                }
             }
+        }
+
+        // Track sync counters for master handoff negotiation
+        let mut state = self.handoff.lock().await;
+        if status.sync_number > state.largest_sync_counter {
+            state.largest_sync_counter = status.sync_number;
+        }
+
+        // Auto-yield: if we're master and another device has a higher counter
+        if state.auto_negotiate
+            && self.tempo_master.watch().borrow().we_are_master
+            && status.device_number != self.config.device_number
+            && status.sync_number > state.sync_counter
+            && !matches!(state.phase, HandoffPhase::Yielding { .. })
+        {
+            state.phase = HandoffPhase::Yielding {
+                target: status.device_number,
+            };
+            debug!(
+                target_device = status.device_number.0,
+                their_sync = status.sync_number,
+                our_sync = state.sync_counter,
+                "auto-yielding master to device with higher sync counter"
+            );
         }
     }
 
     /// Process an incoming MixerStatus to update master tracking state.
-    pub fn process_mixer_status(&self, status: &crate::protocol::status::MixerStatus) {
+    pub async fn process_mixer_status(&self, status: &crate::protocol::status::MixerStatus) {
         if status.is_master {
             self.tempo_master
                 .on_device_is_master(status.device_number, status.bpm);
@@ -400,10 +535,29 @@ impl VirtualCdj {
     }
 
     /// Process any [`DeviceUpdate`] to update master tracking state.
-    pub fn process_device_update(&self, update: &crate::protocol::status::DeviceUpdate) {
+    pub async fn process_device_update(&self, update: &crate::protocol::status::DeviceUpdate) {
         match update {
-            crate::protocol::status::DeviceUpdate::Cdj(s) => self.process_cdj_status(s),
-            crate::protocol::status::DeviceUpdate::Mixer(s) => self.process_mixer_status(s),
+            crate::protocol::status::DeviceUpdate::Cdj(s) => self.process_cdj_status(s).await,
+            crate::protocol::status::DeviceUpdate::Mixer(s) => self.process_mixer_status(s).await,
+        }
+    }
+
+    /// Process a master handoff event received on the beat port (type 0x26).
+    ///
+    /// When another device sends a master_command confirming they are taking
+    /// over as master, and we are in the `Yielding` state toward that device,
+    /// we complete the handoff by resigning master.
+    pub async fn process_master_handoff(&self, event: &MasterHandoffEvent) {
+        let mut state = self.handoff.lock().await;
+        if let HandoffPhase::Yielding { target } = state.phase {
+            if target == event.device_number {
+                self.tempo_master.resign_master();
+                state.phase = HandoffPhase::Idle;
+                debug!(
+                    device = event.device_number.0,
+                    "master handoff complete — resigned master"
+                );
+            }
         }
     }
 
@@ -447,6 +601,7 @@ impl VirtualCdj {
             let sending_flag = Arc::clone(&self.sending_status);
             let counter = Arc::clone(&self.packet_counter);
             let last_beat = Arc::clone(&self.last_beat_at);
+            let handoff = Arc::clone(&self.handoff);
             let config = self.config.clone();
             let socket = self.status_socket.clone();
             let master_watch = self.tempo_master.watch();
@@ -480,9 +635,20 @@ impl VirtualCdj {
                     let seq = counter.fetch_add(1, Ordering::Relaxed);
                     let master_state = master_watch.borrow().clone();
 
+                    // Read handoff state for sync_counter and handoff byte
+                    let hs = handoff.lock().await;
+                    let sync_number = hs.sync_counter;
+                    let hand_off_byte = match hs.phase {
+                        HandoffPhase::Yielding { target } => Some(target.0),
+                        _ => None,
+                    };
+                    // During yielding, keep advertising master=true
+                    let is_yielding = matches!(hs.phase, HandoffPhase::Yielding { .. });
+                    drop(hs);
+
                     let flags = CdjStatusFlags {
                         playing: playing.load(Ordering::Relaxed),
-                        master: master_state.we_are_master,
+                        master: master_state.we_are_master || is_yielding,
                         synced: synced.load(Ordering::Relaxed),
                         on_air: true,
                         bpm_sync: false,
@@ -492,6 +658,8 @@ impl VirtualCdj {
                         device_number: config.device_number,
                         flags,
                         bpm: master_state.master_tempo,
+                        sync_number,
+                        master_hand_off: hand_off_byte,
                         packet_number: seq as u32,
                         ..CdjStatusBuilder::default()
                     };
@@ -679,6 +847,7 @@ impl VirtualCdj {
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
             last_beat_at: Arc::new(AtomicU64::new(0)),
+            handoff: Arc::new(Mutex::new(HandoffState::default())),
             opus_quad_mode: false,
             broadcast_address: Ipv4Addr::BROADCAST,
         })
@@ -1202,7 +1371,7 @@ mod tests {
             timestamp: std::time::Instant::now(),
         };
 
-        vcdj.process_cdj_status(&status);
+        vcdj.process_cdj_status(&status).await;
         assert_eq!(vcdj.tempo_master().master_device(), Some(DeviceNumber(3)));
         assert!((vcdj.tempo_master().master_tempo().0 - 128.0).abs() < f64::EPSILON);
         assert!(!vcdj.tempo_master().we_are_master());
@@ -1256,7 +1425,7 @@ mod tests {
             timestamp: std::time::Instant::now(),
         };
 
-        vcdj.process_cdj_status(&status);
+        vcdj.process_cdj_status(&status).await;
 
         // Should have received MasterChanged + MasterYieldedToUs events
         let mut got_yield = false;
@@ -1338,7 +1507,7 @@ mod tests {
             timestamp: std::time::Instant::now(),
         };
 
-        vcdj.process_mixer_status(&status);
+        vcdj.process_mixer_status(&status).await;
         assert_eq!(vcdj.tempo_master().master_device(), Some(DeviceNumber(33)));
         assert!((vcdj.tempo_master().master_tempo().0 - 126.0).abs() < f64::EPSILON);
 
@@ -1389,7 +1558,7 @@ mod tests {
             disc_track_count: 0,
             timestamp: std::time::Instant::now(),
         };
-        vcdj.process_cdj_status(&status);
+        vcdj.process_cdj_status(&status).await;
 
         // Now process a beat from the same master with different BPM
         let beat = crate::protocol::beat::Beat {
@@ -1821,5 +1990,164 @@ mod tests {
 
         // BPM should reflect set_tempo value even when not master
         assert!((status.bpm.0 - 135.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn vcdj_request_master_negotiated_increments_sync_counter() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_auto_negotiate(true).await;
+
+        // Simulate seeing a device with sync_counter=3
+        let status = make_cdj_status(DeviceNumber(2), Bpm(128.0), false, None, 3);
+        vcdj.process_cdj_status(&status).await;
+
+        // Request master via negotiation
+        vcdj.request_master_role_negotiated().await;
+
+        let state = vcdj.handoff.lock().await;
+        assert!(matches!(state.phase, HandoffPhase::Requesting));
+        assert_eq!(state.sync_counter, 4); // largest_sync_counter(3) + 1
+        drop(state);
+
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_auto_yield_on_higher_sync_counter() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_auto_negotiate(true).await;
+
+        // Make ourselves master
+        vcdj.request_master_role(Bpm(128.0)).await.unwrap();
+        assert!(vcdj.tempo_master().we_are_master());
+
+        // Another device sends status with a higher sync counter
+        let status = make_cdj_status(DeviceNumber(2), Bpm(128.0), false, None, 10);
+        vcdj.process_cdj_status(&status).await;
+
+        let state = vcdj.handoff.lock().await;
+        assert!(
+            matches!(state.phase, HandoffPhase::Yielding { target } if target == DeviceNumber(2))
+        );
+        drop(state);
+
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_no_auto_yield_when_disabled() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        // auto_negotiate defaults to false
+
+        // Make ourselves master
+        vcdj.request_master_role(Bpm(128.0)).await.unwrap();
+
+        // Another device sends status with a higher sync counter
+        let status = make_cdj_status(DeviceNumber(2), Bpm(128.0), false, None, 10);
+        vcdj.process_cdj_status(&status).await;
+
+        let state = vcdj.handoff.lock().await;
+        assert!(matches!(state.phase, HandoffPhase::Idle));
+        drop(state);
+
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_auto_accept_yield_when_enabled() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_auto_negotiate(true).await;
+
+        // Another device is master and yields to us (device 5)
+        let status = make_cdj_status(DeviceNumber(3), Bpm(126.0), true, Some(5), 1);
+        vcdj.process_cdj_status(&status).await;
+
+        // We should now be master
+        assert!(vcdj.tempo_master().we_are_master());
+
+        vcdj.stop();
+    }
+
+    #[tokio::test]
+    async fn vcdj_handoff_complete_on_master_command() {
+        let cfg = VirtualCdjConfig::new(5, Ipv4Addr::LOCALHOST).unwrap();
+        let vcdj = VirtualCdj::start(cfg, None).await.unwrap();
+        vcdj.set_auto_negotiate(true).await;
+
+        // Make ourselves master and enter yielding state
+        vcdj.request_master_role(Bpm(128.0)).await.unwrap();
+        {
+            let mut state = vcdj.handoff.lock().await;
+            state.phase = HandoffPhase::Yielding {
+                target: DeviceNumber(2),
+            };
+        }
+
+        // Receive master handoff event from the target device
+        let event = MasterHandoffEvent {
+            device_number: DeviceNumber(2),
+            target_device: DeviceNumber(2),
+        };
+        vcdj.process_master_handoff(&event).await;
+
+        // We should have resigned master
+        assert!(!vcdj.tempo_master().we_are_master());
+        let state = vcdj.handoff.lock().await;
+        assert!(matches!(state.phase, HandoffPhase::Idle));
+        drop(state);
+
+        vcdj.stop();
+    }
+
+    /// Helper to create a CdjStatus with specific fields for handoff tests.
+    fn make_cdj_status(
+        device: DeviceNumber,
+        bpm: Bpm,
+        is_master: bool,
+        master_hand_off: Option<u8>,
+        sync_number: u32,
+    ) -> crate::protocol::status::CdjStatus {
+        crate::protocol::status::CdjStatus {
+            name: "CDJ".to_string(),
+            device_number: device,
+            device_type: crate::device::types::DeviceType::Cdj,
+            track_source_player: device,
+            track_source_slot: crate::device::types::TrackSourceSlot::UsbSlot,
+            track_type: crate::device::types::TrackType::Rekordbox,
+            rekordbox_id: 0,
+            play_state: crate::device::types::PlayState::Playing,
+            play_state_2: crate::device::types::PlayState2::Moving,
+            play_state_3: crate::device::types::PlayState3::ForwardCdj,
+            is_playing_flag: true,
+            is_master,
+            is_synced: true,
+            is_bpm_synced: false,
+            is_on_air: true,
+            bpm,
+            pitch: crate::device::types::Pitch(0x100000),
+            beat_number: Some(crate::device::types::BeatNumber(1)),
+            beat_within_bar: 1,
+            firmware_version: "1A01".to_string(),
+            sync_number,
+            master_hand_off,
+            loop_start: None,
+            loop_end: None,
+            loop_beats: None,
+            packet_length: 0xd4,
+            is_busy: false,
+            track_number: 1,
+            cue_countdown: None,
+            packet_number: 0,
+            local_usb_state: 4,
+            local_sd_state: 0,
+            link_media_available: false,
+            local_disc_state: 0,
+            disc_track_count: 0,
+            timestamp: std::time::Instant::now(),
+        }
     }
 }

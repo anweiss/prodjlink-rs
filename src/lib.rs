@@ -177,7 +177,7 @@ impl ProDjLinkBuilder {
         let status_task = tokio::spawn(async move {
             loop {
                 match status_rx.recv().await {
-                    Ok(update) => vcdj_for_status.process_device_update(&update),
+                    Ok(update) => vcdj_for_status.process_device_update(&update).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
@@ -197,6 +197,20 @@ impl ProDjLinkBuilder {
             }
         });
 
+        // Wire master handoff events from the beat port to the VirtualCdj
+        // so the baroque dance protocol can complete automatically.
+        let vcdj_for_handoff = Arc::clone(&virtual_cdj);
+        let mut handoff_rx = beat_finder.subscribe_master_handoff();
+        let handoff_task = tokio::spawn(async move {
+            loop {
+                match handoff_rx.recv().await {
+                    Ok(event) => vcdj_for_handoff.process_master_handoff(&event).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
         Ok(ProDjLink {
             finder,
             beat_finder,
@@ -205,6 +219,7 @@ impl ProDjLinkBuilder {
             connection_manager,
             _status_task: status_task,
             _beat_task: beat_task,
+            _handoff_task: handoff_task,
         })
     }
 }
@@ -218,6 +233,7 @@ pub struct ProDjLink {
     connection_manager: ConnectionManager,
     _status_task: tokio::task::JoinHandle<()>,
     _beat_task: tokio::task::JoinHandle<()>,
+    _handoff_task: tokio::task::JoinHandle<()>,
 }
 
 impl ProDjLink {
@@ -297,6 +313,7 @@ impl ProDjLink {
     pub fn shutdown(self) {
         self._status_task.abort();
         self._beat_task.abort();
+        self._handoff_task.abort();
         match Arc::try_unwrap(self.virtual_cdj) {
             Ok(vcdj) => vcdj.stop(),
             Err(_arc) => {

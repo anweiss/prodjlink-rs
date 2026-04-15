@@ -394,6 +394,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         beat_number: Some(beat_num),
                         beat_within_bar,
                         master_hand_off: None,
+                        sync_number: 0,
                         packet_number: seq,
                     };
                     let pkt = build_cdj_status(&builder);

@@ -646,6 +646,8 @@ pub struct CdjStatusBuilder {
     pub beat_within_bar: u8,
     /// Device number being yielded to, or `None` (encoded as 0xFF).
     pub master_hand_off: Option<u8>,
+    /// Sync counter for master handoff negotiation.
+    pub sync_number: u32,
     /// Packet sequence number.
     pub packet_number: u32,
 }
@@ -661,6 +663,7 @@ impl Default for CdjStatusBuilder {
             beat_number: None,
             beat_within_bar: 1,
             master_hand_off: None,
+            sync_number: 0,
             packet_number: 0,
         }
     }
@@ -709,6 +712,9 @@ pub fn build_cdj_status(params: &CdjStatusBuilder) -> Vec<u8> {
 
     // Master hand-off
     pkt[MASTER_HAND_OFF_OFFSET] = params.master_hand_off.unwrap_or(NO_HAND_OFF);
+
+    // Sync number (4 bytes at 0x84) — used in master handoff negotiation
+    number_to_bytes(params.sync_number, &mut pkt, SYNC_NUMBER_OFFSET, 4);
 
     // Play state 1 — Playing (0x03) or Paused (0x05) depending on flag
     pkt[PLAY_STATE_OFFSET] = if params.flags.playing { 0x03 } else { 0x05 };
@@ -1575,6 +1581,7 @@ mod tests {
             beat_number: Some(42),
             beat_within_bar: 3,
             master_hand_off: None,
+            sync_number: 7,
             packet_number: 99,
         };
         let pkt = build_cdj_status(&params);
@@ -1592,6 +1599,7 @@ mod tests {
         assert_eq!(parsed.beat_number, Some(BeatNumber(42)));
         assert_eq!(parsed.beat_within_bar, 3);
         assert!(parsed.master_hand_off.is_none());
+        assert_eq!(parsed.sync_number, 7);
         assert_eq!(parsed.packet_number, 99);
     }
 
