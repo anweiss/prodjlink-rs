@@ -140,6 +140,10 @@ pub struct VirtualCdj {
     status_task: Mutex<Option<JoinHandle<()>>>,
     /// Monotonic packet counter for status packets.
     packet_counter: Arc<AtomicU64>,
+    /// Timestamp (Instant-based) of the last beat we processed.
+    /// Used by the status broadcast loop to avoid sending status packets
+    /// too close to beat arrivals — beat timing takes priority.
+    last_beat_at: Arc<AtomicU64>,
     opus_quad_mode: bool,
     broadcast_address: Ipv4Addr,
 }
@@ -217,6 +221,7 @@ impl VirtualCdj {
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
+            last_beat_at: Arc::new(AtomicU64::new(0)),
             opus_quad_mode: false,
             broadcast_address: Ipv4Addr::BROADCAST,
         })
@@ -383,6 +388,13 @@ impl VirtualCdj {
     /// Uses the effective (pitch-adjusted) tempo so the tracked master BPM
     /// reflects what the audience actually hears.
     pub fn process_beat(&self, beat: &crate::protocol::beat::Beat) {
+        // Record beat arrival time so the status broadcast loop can avoid
+        // sending packets too close to beats (beat timing takes priority).
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.last_beat_at.store(now, Ordering::Release);
         self.tempo_master
             .on_beat(beat.device_number, Bpm(beat.effective_tempo()));
     }
@@ -434,6 +446,7 @@ impl VirtualCdj {
             let synced = Arc::clone(&self.synced);
             let sending_flag = Arc::clone(&self.sending_status);
             let counter = Arc::clone(&self.packet_counter);
+            let last_beat = Arc::clone(&self.last_beat_at);
             let config = self.config.clone();
             let socket = self.status_socket.clone();
             let master_watch = self.tempo_master.watch();
@@ -441,12 +454,27 @@ impl VirtualCdj {
             let handle = tokio::spawn(async move {
                 let mut interval = tokio::time::interval(STATUS_BROADCAST_INTERVAL);
                 let broadcast_addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), STATUS_PORT);
+                /// Skip status packets within this window after a beat arrival
+                /// so beat timing takes priority on the network.
+                const BEAT_GUARD_MS: u64 = 50;
 
                 loop {
                     interval.tick().await;
 
                     if !sending_flag.load(Ordering::Relaxed) {
                         break;
+                    }
+
+                    // Beat timing guard: skip if a beat arrived very recently
+                    let beat_ts = last_beat.load(Ordering::Acquire);
+                    if beat_ts > 0 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        if now.saturating_sub(beat_ts) < BEAT_GUARD_MS {
+                            continue;
+                        }
                     }
 
                     let seq = counter.fetch_add(1, Ordering::Relaxed);
@@ -650,6 +678,7 @@ impl VirtualCdj {
             sending_status: Arc::new(AtomicBool::new(false)),
             status_task: Mutex::new(None),
             packet_counter: Arc::new(AtomicU64::new(0)),
+            last_beat_at: Arc::new(AtomicU64::new(0)),
             opus_quad_mode: false,
             broadcast_address: Ipv4Addr::BROADCAST,
         })
