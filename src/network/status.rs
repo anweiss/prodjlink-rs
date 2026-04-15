@@ -42,14 +42,25 @@ impl StatusListener {
             let mut buf = [0u8; 4096];
             loop {
                 match socket.recv_from(&mut buf).await {
-                    Ok((len, _)) => {
-                        if let Ok(update) = parse_status(&buf[..len]) {
-                            let key = match &update {
-                                DeviceUpdate::Cdj(s) => s.device_number.0,
-                                DeviceUpdate::Mixer(s) => s.device_number.0,
-                            };
-                            recv_latest.write().await.insert(key, update.clone());
-                            let _ = recv_tx.send(update);
+                    Ok((len, addr)) => {
+                        match parse_status(&buf[..len]) {
+                            Ok(update) => {
+                                let key = match &update {
+                                    DeviceUpdate::Cdj(s) => s.device_number.0,
+                                    DeviceUpdate::Mixer(s) => s.device_number.0,
+                                };
+                                recv_latest.write().await.insert(key, update.clone());
+                                let _ = recv_tx.send(update);
+                            }
+                            Err(_) => {
+                                let ptype = if len > 0x0a { buf[0x0a] } else { 0 };
+                                tracing::trace!(
+                                    from = %addr,
+                                    packet_type = format!("0x{:02x}", ptype),
+                                    len,
+                                    "status port: ignoring unhandled packet"
+                                );
+                            }
                         }
                     }
                     Err(_) => break,

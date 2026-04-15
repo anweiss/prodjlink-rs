@@ -141,6 +141,11 @@ pub fn build_keep_alive(
     let octets = ip_address.octets();
     pkt[IP_OFFSET..IP_OFFSET + 4].copy_from_slice(&octets);
 
+    // CDJ-3000 compatibility marker at byte 0x35.
+    // Without this, CDJ-3000s using device numbers 5–6 may repeatedly drop
+    // off the network, and the hardware may refuse to send full status packets.
+    pkt[0x35] = 0x64;
+
     pkt
 }
 

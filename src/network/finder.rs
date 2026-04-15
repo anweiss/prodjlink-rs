@@ -288,30 +288,37 @@ mod tests {
             .await
             .unwrap();
 
-        // Wait for the event with a timeout
-        let event = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
-
-        match event {
-            Ok(Ok(FinderEvent::DeviceFound(ann))) => {
-                assert_eq!(ann.name, "TestCDJ");
-                assert_eq!(ann.number, DeviceNumber(7));
-                assert_eq!(ann.mac_address, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
-            }
-            other => {
-                // On some systems the packet may not loop back; don't fail hard
-                eprintln!("Loopback test: unexpected result: {other:?}");
+        // Wait for our specific TestCDJ event (may receive real hardware first)
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        let mut found_test_cdj = false;
+        while tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout_at(deadline, rx.recv()).await {
+                Ok(Ok(FinderEvent::DeviceFound(ann))) if ann.name == "TestCDJ" => {
+                    assert_eq!(ann.number, DeviceNumber(7));
+                    assert_eq!(ann.mac_address, [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]);
+                    found_test_cdj = true;
+                    break;
+                }
+                Ok(Ok(_)) => continue, // skip events from real hardware
+                Ok(Err(_)) => break,
+                Err(_) => break, // timeout
             }
         }
+        if !found_test_cdj {
+            eprintln!("Loopback test: TestCDJ event not received (real hardware may be on network)");
+        }
 
-        // Verify device appears in the map
+        // Verify device appears in the map (may contain real hardware too)
         let devs = finder.devices().await;
-        if !devs.is_empty() {
+        if found_test_cdj {
             assert!(devs.iter().any(|d| d.number == DeviceNumber(7)));
         }
 
         // Also test the single-device lookup
-        if let Some(dev) = finder.device(DeviceNumber(7)).await {
-            assert_eq!(dev.name, "TestCDJ");
+        if found_test_cdj {
+            if let Some(dev) = finder.device(DeviceNumber(7)).await {
+                assert_eq!(dev.name, "TestCDJ");
+            }
         }
 
         finder.stop();

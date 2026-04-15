@@ -142,7 +142,20 @@ impl ProDjLinkBuilder {
 
     /// Build and start all services.
     pub async fn build(self) -> Result<ProDjLink> {
-        let interface_addr = self.interface_address.unwrap_or(Ipv4Addr::UNSPECIFIED);
+        // Resolve the interface address. When not explicitly provided, auto-detect
+        // by picking the first non-loopback IPv4 interface. A valid IP and MAC in
+        // keep-alive packets is required for CDJ-3000 (and possibly other modern
+        // hardware) to send full status packets back to us.
+        let interface_addr = match self.interface_address {
+            Some(addr) => addr,
+            None => {
+                let ifaces = crate::network::interface::list_interfaces();
+                ifaces
+                    .first()
+                    .map(|i| i.ip)
+                    .unwrap_or(Ipv4Addr::UNSPECIFIED)
+            }
+        };
 
         let finder = DeviceFinder::start().await?;
         let beat_finder = BeatFinder::start().await?;
@@ -150,7 +163,10 @@ impl ProDjLinkBuilder {
 
         let cdj_config =
             VirtualCdjConfig::new(self.device_number, interface_addr)?.with_name(self.device_name);
-        let virtual_cdj = Arc::new(VirtualCdj::start(cdj_config, Some(&finder)).await?);
+        // Use the full 3-stage claim protocol so CDJ-3000 and other modern
+        // devices recognise us as a proper network participant and send
+        // full status packets (type 0x0a) rather than minimal NXS-GW ones.
+        let virtual_cdj = Arc::new(VirtualCdj::start_claimed(cdj_config, &finder).await?);
 
         let connection_manager = ConnectionManager::new(self.device_number);
 
