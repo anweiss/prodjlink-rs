@@ -1002,17 +1002,15 @@ async fn defense_loop(
             Ok(FinderEvent::ClaimReceived {
                 device_number: dn,
                 source_ip,
-            }) => {
-                if dn == device_number {
-                    let pkt = build_defense(&name, device_number, ip);
-                    let target = SocketAddr::new(source_ip.into(), DISCOVERY_PORT);
-                    let _ = socket.send_to(&pkt, target).await;
-                    tracing::info!(
-                        device_number,
-                        %source_ip,
-                        "Defended device number against incoming claim"
-                    );
-                }
+            }) if dn == device_number => {
+                let pkt = build_defense(&name, device_number, ip);
+                let target = SocketAddr::new(source_ip.into(), DISCOVERY_PORT);
+                let _ = socket.send_to(&pkt, target).await;
+                tracing::info!(
+                    device_number,
+                    %source_ip,
+                    "Defended device number against incoming claim"
+                );
             }
             Err(broadcast::error::RecvError::Closed) => break,
             _ => {} // ignore other events
