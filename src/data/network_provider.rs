@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn network_provider_builds_beatgrid_args() {
         let data_ref = DataReference::new(DeviceNumber(3), TrackSourceSlot::UsbSlot, 42);
-        let args = vec![
+        let args = [
             Field::number(MENU_ID_DATA as u32),
             Field::number(u8::from(data_ref.slot) as u32),
             Field::number(data_ref.rekordbox_id),

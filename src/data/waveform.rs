@@ -535,7 +535,7 @@ mod tests {
     fn detail_total_time_ms() {
         let mut buf = vec![0xCC; 19];
         // 150 frames = 1000 ms (1 second at 150 half-frames/sec)
-        buf.extend_from_slice(&vec![0x0A; 150]);
+        buf.extend_from_slice(&[0x0A; 150]);
         let data = Bytes::from(buf);
         let detail = WaveformDetail::from_bytes(data, WaveformStyle::Blue).unwrap();
         assert_eq!(detail.frame_count, 150);

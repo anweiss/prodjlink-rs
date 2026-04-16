@@ -298,10 +298,10 @@ fn channels_on_air_round_trip() {
     let pkt = mock_channels_on_air(33, &[true, false, true, false]);
     let oa = parse_channels_on_air(&pkt).expect("should parse channels-on-air");
     assert_eq!(oa.device_number.0, 33);
-    assert_eq!(*oa.channels.get(&1).unwrap(), true);
-    assert_eq!(*oa.channels.get(&2).unwrap(), false);
-    assert_eq!(*oa.channels.get(&3).unwrap(), true);
-    assert_eq!(*oa.channels.get(&4).unwrap(), false);
+    assert!(*oa.channels.get(&1).unwrap());
+    assert!(!(*oa.channels.get(&2).unwrap()));
+    assert!(*oa.channels.get(&3).unwrap());
+    assert!(!(*oa.channels.get(&4).unwrap()));
 }
 
 #[test]
@@ -309,8 +309,8 @@ fn channels_on_air_6ch() {
     let pkt = mock_channels_on_air(33, &[true, true, false, false, true, false]);
     let oa = parse_channels_on_air(&pkt).expect("should parse 6-channel on-air");
     assert_eq!(oa.channels.len(), 6);
-    assert_eq!(*oa.channels.get(&5).unwrap(), true);
-    assert_eq!(*oa.channels.get(&6).unwrap(), false);
+    assert!(*oa.channels.get(&5).unwrap());
+    assert!(!(*oa.channels.get(&6).unwrap()));
 }
 
 // -----------------------------------------------------------------------
@@ -418,10 +418,10 @@ fn fixture_precise_position_mid_track() {
 fn fixture_channels_on_air_1_3() {
     let pkt = fixtures::channels_on_air_1_3();
     let oa = parse_channels_on_air(&pkt).expect("fixture should parse");
-    assert_eq!(*oa.channels.get(&1).unwrap(), true);
-    assert_eq!(*oa.channels.get(&2).unwrap(), false);
-    assert_eq!(*oa.channels.get(&3).unwrap(), true);
-    assert_eq!(*oa.channels.get(&4).unwrap(), false);
+    assert!(*oa.channels.get(&1).unwrap());
+    assert!(!(*oa.channels.get(&2).unwrap()));
+    assert!(*oa.channels.get(&3).unwrap());
+    assert!(!(*oa.channels.get(&4).unwrap()));
 }
 
 // -----------------------------------------------------------------------

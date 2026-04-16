@@ -316,7 +316,7 @@ const PREFIX_LEN: usize = 0x24;
 const DEVICE_NAME: &[u8; 20] = b"prodjlink-rs\0\0\0\0\0\0\0\0";
 
 /// Player settings that can be pushed to a CDJ via the load-settings command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PlayerSettings {
     pub lcd_brightness: LcdBrightness,
     pub jog_mode: JogMode,
@@ -326,21 +326,6 @@ pub struct PlayerSettings {
     pub time_display_mode: TimeDisplayMode,
     pub play_mode: PlayMode,
     pub quantize_mode: QuantizeMode,
-}
-
-impl Default for PlayerSettings {
-    fn default() -> Self {
-        Self {
-            lcd_brightness: LcdBrightness::default(),
-            jog_mode: JogMode::default(),
-            auto_cue_level: AutoCueLevel::default(),
-            tempo_range: TempoRange::default(),
-            language: Language::default(),
-            time_display_mode: TimeDisplayMode::default(),
-            play_mode: PlayMode::default(),
-            quantize_mode: QuantizeMode::default(),
-        }
-    }
 }
 
 impl PlayerSettings {

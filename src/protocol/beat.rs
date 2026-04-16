@@ -873,10 +873,10 @@ mod tests {
         assert_eq!(oa.name, "DJM-900NXS2");
         assert_eq!(oa.device_number, DeviceNumber(33));
         assert_eq!(oa.channels.len(), 4);
-        assert_eq!(oa.channels[&1], true);
-        assert_eq!(oa.channels[&2], false);
-        assert_eq!(oa.channels[&3], true);
-        assert_eq!(oa.channels[&4], false);
+        assert!(oa.channels[&1]);
+        assert!(!oa.channels[&2]);
+        assert!(oa.channels[&3]);
+        assert!(!oa.channels[&4]);
     }
 
     #[test]
@@ -886,12 +886,12 @@ mod tests {
         let oa = parse_channels_on_air(&pkt).unwrap();
 
         assert_eq!(oa.channels.len(), 6);
-        assert_eq!(oa.channels[&1], true);
-        assert_eq!(oa.channels[&2], true);
-        assert_eq!(oa.channels[&3], false);
-        assert_eq!(oa.channels[&4], false);
-        assert_eq!(oa.channels[&5], true);
-        assert_eq!(oa.channels[&6], false);
+        assert!(oa.channels[&1]);
+        assert!(oa.channels[&2]);
+        assert!(!oa.channels[&3]);
+        assert!(!oa.channels[&4]);
+        assert!(oa.channels[&5]);
+        assert!(!oa.channels[&6]);
     }
 
     #[test]
@@ -913,10 +913,10 @@ mod tests {
         // Any non-zero byte counts as on-air.
         let pkt = make_on_air_packet("DJM-900NXS2", 33, &[0xFF, 0x00, 0x42, 0x00]);
         let oa = parse_channels_on_air(&pkt).unwrap();
-        assert_eq!(oa.channels[&1], true);
-        assert_eq!(oa.channels[&2], false);
-        assert_eq!(oa.channels[&3], true);
-        assert_eq!(oa.channels[&4], false);
+        assert!(oa.channels[&1]);
+        assert!(!oa.channels[&2]);
+        assert!(oa.channels[&3]);
+        assert!(!oa.channels[&4]);
     }
 
     #[test]
@@ -1009,10 +1009,10 @@ mod tests {
         let pkt = build_on_air("DJM-900NXS2", DeviceNumber(33), &[true, true, false, false]);
         let on_air = parse_channels_on_air(&pkt).unwrap();
         assert_eq!(on_air.device_number, DeviceNumber(33));
-        assert_eq!(on_air.channels[&1], true);
-        assert_eq!(on_air.channels[&2], true);
-        assert_eq!(on_air.channels[&3], false);
-        assert_eq!(on_air.channels[&4], false);
+        assert!(on_air.channels[&1]);
+        assert!(on_air.channels[&2]);
+        assert!(!on_air.channels[&3]);
+        assert!(!on_air.channels[&4]);
     }
 
     // -----------------------------------------------------------------------

@@ -81,7 +81,7 @@ pub fn parse_keep_alive(data: &[u8]) -> Result<DeviceAnnouncement> {
     let is_xdj_az = name == "XDJ-AZ";
     let is_using_device_library_plus = data
         .get(DEVICE_LIBRARY_PLUS_OFFSET)
-        .map_or(false, |&b| b != 0);
+        .is_some_and(|&b| b != 0);
 
     Ok(DeviceAnnouncement {
         name,

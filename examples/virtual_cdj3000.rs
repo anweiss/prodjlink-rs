@@ -190,7 +190,7 @@ fn beat_phase_bar(beat: u8) -> String {
     bar.push('[');
     for i in 1..=4u8 {
         if i == beat {
-            bar.push_str("\u{2588}");
+            bar.push('\u{2588}');
         } else {
             bar.push('.');
         }
@@ -534,97 +534,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Poll for key events (50ms timeout keeps render responsive)
-            if event::poll(Duration::from_millis(50)).unwrap_or(false) {
-                if let Ok(Event::Key(KeyEvent {
+            if event::poll(Duration::from_millis(50)).unwrap_or(false)
+                && let Ok(Event::Key(KeyEvent {
                     code,
                     modifiers,
                     kind,
                     ..
                 })) = event::read()
-                {
-                    // Only handle Press events (avoid double-fire on Release)
-                    if kind != KeyEventKind::Press {
-                        continue;
+            {
+                // Only handle Press events (avoid double-fire on Release)
+                if kind != KeyEventKind::Press {
+                    continue;
+                }
+
+                // Ctrl+C
+                if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+                    break;
+                }
+
+                match code {
+                    KeyCode::Char('q') => break,
+
+                    KeyCode::Char('p') => {
+                        let was = ui_state.playing.load(Ordering::Relaxed);
+                        ui_state.playing.store(!was, Ordering::Relaxed);
+                        ui_state.push_event(if !was {
+                            "\u{25b6} Playing".into()
+                        } else {
+                            "\u{23f8} Paused".into()
+                        });
                     }
 
-                    // Ctrl+C
-                    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
-                        break;
+                    KeyCode::Char('m') => {
+                        let was = ui_state.master.load(Ordering::Relaxed);
+                        ui_state.master.store(!was, Ordering::Relaxed);
+                        if !was {
+                            // Becoming master — we drive the grid, not follow it.
+                            ui_state.clear_phase_ref();
+                        }
+                        ui_state.push_event(if !was {
+                            "\u{2605} Master ON".into()
+                        } else {
+                            "\u{2606} Master OFF".into()
+                        });
                     }
 
-                    match code {
-                        KeyCode::Char('q') => break,
-
-                        KeyCode::Char('p') => {
-                            let was = ui_state.playing.load(Ordering::Relaxed);
-                            ui_state.playing.store(!was, Ordering::Relaxed);
-                            ui_state.push_event(if !was {
-                                "\u{25b6} Playing".into()
-                            } else {
-                                "\u{23f8} Paused".into()
-                            });
+                    KeyCode::Char('s') => {
+                        let was = ui_state.synced.load(Ordering::Relaxed);
+                        ui_state.synced.store(!was, Ordering::Relaxed);
+                        if was {
+                            // Sync turned off — drop phase lock.
+                            ui_state.clear_phase_ref();
                         }
-
-                        KeyCode::Char('m') => {
-                            let was = ui_state.master.load(Ordering::Relaxed);
-                            ui_state.master.store(!was, Ordering::Relaxed);
-                            if !was {
-                                // Becoming master — we drive the grid, not follow it.
-                                ui_state.clear_phase_ref();
-                            }
-                            ui_state.push_event(if !was {
-                                "\u{2605} Master ON".into()
-                            } else {
-                                "\u{2606} Master OFF".into()
-                            });
-                        }
-
-                        KeyCode::Char('s') => {
-                            let was = ui_state.synced.load(Ordering::Relaxed);
-                            ui_state.synced.store(!was, Ordering::Relaxed);
-                            if was {
-                                // Sync turned off — drop phase lock.
-                                ui_state.clear_phase_ref();
-                            }
-                            ui_state.push_event(if !was {
-                                "Sync ON".into()
-                            } else {
-                                "Sync OFF".into()
-                            });
-                        }
-
-                        // Arrow keys: fine BPM adjustment
-                        KeyCode::Up => {
-                            let new_bpm = (ui_state.bpm() + 1.0).min(300.0);
-                            ui_state.set_bpm(new_bpm);
-                            ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
-                        }
-                        KeyCode::Down => {
-                            let new_bpm = (ui_state.bpm() - 1.0).max(20.0);
-                            ui_state.set_bpm(new_bpm);
-                            ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
-                        }
-                        KeyCode::Right => {
-                            let new_bpm = (ui_state.bpm() + 0.1).min(300.0);
-                            ui_state.set_bpm(new_bpm);
-                            ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
-                        }
-                        KeyCode::Left => {
-                            let new_bpm = (ui_state.bpm() - 0.1).max(20.0);
-                            ui_state.set_bpm(new_bpm);
-                            ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
-                        }
-
-                        // Number keys: BPM presets (1=80, 2=100, 3=120, ..., 9=240)
-                        KeyCode::Char(c @ '1'..='9') => {
-                            let n = (c as u8 - b'0') as f64;
-                            let preset = 60.0 + n * 20.0;
-                            ui_state.set_bpm(preset);
-                            ui_state.push_event(format!("BPM preset \u{2192} {preset:.0}"));
-                        }
-
-                        _ => {}
+                        ui_state.push_event(if !was {
+                            "Sync ON".into()
+                        } else {
+                            "Sync OFF".into()
+                        });
                     }
+
+                    // Arrow keys: fine BPM adjustment
+                    KeyCode::Up => {
+                        let new_bpm = (ui_state.bpm() + 1.0).min(300.0);
+                        ui_state.set_bpm(new_bpm);
+                        ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
+                    }
+                    KeyCode::Down => {
+                        let new_bpm = (ui_state.bpm() - 1.0).max(20.0);
+                        ui_state.set_bpm(new_bpm);
+                        ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
+                    }
+                    KeyCode::Right => {
+                        let new_bpm = (ui_state.bpm() + 0.1).min(300.0);
+                        ui_state.set_bpm(new_bpm);
+                        ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
+                    }
+                    KeyCode::Left => {
+                        let new_bpm = (ui_state.bpm() - 0.1).max(20.0);
+                        ui_state.set_bpm(new_bpm);
+                        ui_state.push_event(format!("BPM \u{2192} {new_bpm:.1}"));
+                    }
+
+                    // Number keys: BPM presets (1=80, 2=100, 3=120, ..., 9=240)
+                    KeyCode::Char(c @ '1'..='9') => {
+                        let n = (c as u8 - b'0') as f64;
+                        let preset = 60.0 + n * 20.0;
+                        ui_state.set_bpm(preset);
+                        ui_state.push_event(format!("BPM preset \u{2192} {preset:.0}"));
+                    }
+
+                    _ => {}
                 }
             }
         }
@@ -716,7 +715,7 @@ fn handle_incoming_command(data: &[u8], our_device: u8, state: &CdjState) {
             ];
 
             // Only react to the action targeting our channel (1-indexed)
-            if our_device >= 1 && our_device <= 4 {
+            if (1..=4).contains(&our_device) {
                 match channels[(our_device - 1) as usize] {
                     FaderAction::Start => {
                         state.playing.store(true, Ordering::Relaxed);

@@ -62,50 +62,45 @@ impl BeatFinder {
         let xdj_xz_clone = last_xdj_xz_seen.clone();
         let recv_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
-            loop {
-                match socket.recv_from(&mut buf).await {
-                    Ok((len, _)) => {
-                        let data = &buf[..len];
-                        if let Ok(ptype) = parse_header_on_port(data, BEAT_PORT) {
-                            match ptype {
-                                PacketType::Beat => {
-                                    if let Ok(b) = parse_beat(data) {
-                                        if is_xdj_xz_name(&b.name) {
-                                            *xdj_xz_clone.lock().unwrap() = Some(Instant::now());
-                                        }
-                                        let _ = recv_tx.send(BeatEvent::NewBeat(b));
-                                    }
+            while let Ok((len, _)) = socket.recv_from(&mut buf).await {
+                let data = &buf[..len];
+                if let Ok(ptype) = parse_header_on_port(data, BEAT_PORT) {
+                    match ptype {
+                        PacketType::Beat => {
+                            if let Ok(b) = parse_beat(data) {
+                                if is_xdj_xz_name(&b.name) {
+                                    *xdj_xz_clone.lock().unwrap() = Some(Instant::now());
                                 }
-                                PacketType::PrecisePosition => {
-                                    if let Ok(pp) = parse_precise_position(data) {
-                                        let _ = recv_tx.send(BeatEvent::PrecisePosition(pp));
-                                    }
-                                }
-                                PacketType::OnAir => {
-                                    if let Ok(oa) = parse_channels_on_air(data) {
-                                        let _ = on_air_tx_clone.send(oa);
-                                    }
-                                }
-                                PacketType::SyncControl => {
-                                    if let Ok(se) = parse_sync(data) {
-                                        let _ = sync_tx_clone.send(se);
-                                    }
-                                }
-                                PacketType::MasterHandoff => {
-                                    if let Ok(mh) = parse_master_handoff(data) {
-                                        let _ = handoff_tx_clone.send(mh);
-                                    }
-                                }
-                                PacketType::FaderStart => {
-                                    if let Ok(fs) = parse_fader_start(data) {
-                                        let _ = fader_start_tx_clone.send(fs);
-                                    }
-                                }
-                                _ => {}
+                                let _ = recv_tx.send(BeatEvent::NewBeat(b));
                             }
                         }
+                        PacketType::PrecisePosition => {
+                            if let Ok(pp) = parse_precise_position(data) {
+                                let _ = recv_tx.send(BeatEvent::PrecisePosition(pp));
+                            }
+                        }
+                        PacketType::OnAir => {
+                            if let Ok(oa) = parse_channels_on_air(data) {
+                                let _ = on_air_tx_clone.send(oa);
+                            }
+                        }
+                        PacketType::SyncControl => {
+                            if let Ok(se) = parse_sync(data) {
+                                let _ = sync_tx_clone.send(se);
+                            }
+                        }
+                        PacketType::MasterHandoff => {
+                            if let Ok(mh) = parse_master_handoff(data) {
+                                let _ = handoff_tx_clone.send(mh);
+                            }
+                        }
+                        PacketType::FaderStart => {
+                            if let Ok(fs) = parse_fader_start(data) {
+                                let _ = fader_start_tx_clone.send(fs);
+                            }
+                        }
+                        _ => {}
                     }
-                    Err(_) => break,
                 }
             }
         });
@@ -152,7 +147,7 @@ impl BeatFinder {
         self.last_xdj_xz_seen
             .lock()
             .unwrap()
-            .map_or(false, |ts| ts.elapsed() < XDJ_XZ_ACTIVE_WINDOW)
+            .is_some_and(|ts| ts.elapsed() < XDJ_XZ_ACTIVE_WINDOW)
     }
 
     /// Stop the beat finder.
@@ -376,10 +371,10 @@ mod tests {
             .expect("channel error");
 
         assert_eq!(evt.device_number, crate::device::types::DeviceNumber(33));
-        assert_eq!(evt.channels[&1], true);
-        assert_eq!(evt.channels[&2], false);
-        assert_eq!(evt.channels[&3], true);
-        assert_eq!(evt.channels[&4], false);
+        assert!(evt.channels[&1]);
+        assert!(!evt.channels[&2]);
+        assert!(evt.channels[&3]);
+        assert!(!evt.channels[&4]);
 
         finder.stop();
     }

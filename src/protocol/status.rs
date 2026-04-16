@@ -1376,8 +1376,12 @@ mod tests {
         let name = b"OPUS-QUAD";
         pkt[NAME_OFFSET..NAME_OFFSET + name.len()].copy_from_slice(name);
         // Zero out rest of name field
-        for i in NAME_OFFSET + name.len()..NAME_OFFSET + NAME_LEN {
-            pkt[i] = 0;
+        for byte in pkt
+            .iter_mut()
+            .take(NAME_OFFSET + NAME_LEN)
+            .skip(NAME_OFFSET + name.len())
+        {
+            *byte = 0;
         }
         pkt
     }
@@ -1625,11 +1629,11 @@ mod tests {
         };
         let byte = flags.to_byte();
         let back = CdjStatusFlags::from_byte(byte);
-        assert_eq!(back.playing, true);
-        assert_eq!(back.master, false);
-        assert_eq!(back.synced, true);
-        assert_eq!(back.on_air, false);
-        assert_eq!(back.bpm_sync, true);
+        assert!(back.playing);
+        assert!(!back.master);
+        assert!(back.synced);
+        assert!(!back.on_air);
+        assert!(back.bpm_sync);
     }
 
     // -- New convenience method tests (CdjStatus) --

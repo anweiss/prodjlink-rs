@@ -297,7 +297,7 @@ impl ProDjLink {
 
     /// Get a reference to the virtual CDJ for sending commands.
     pub fn virtual_cdj(&self) -> &VirtualCdj {
-        &*self.virtual_cdj
+        &self.virtual_cdj
     }
 
     // --- Connection Manager ---

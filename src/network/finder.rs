@@ -72,59 +72,52 @@ impl DeviceFinder {
         let recv_socket = socket.clone();
         let recv_task = tokio::spawn(async move {
             let mut buf = [0u8; 2048];
-            loop {
-                match recv_socket.recv_from(&mut buf).await {
-                    Ok((len, addr)) => {
-                        // Filter out ignored source addresses
-                        if let SocketAddr::V4(v4) = addr {
-                            if recv_ignored.contains(v4.ip()) {
-                                continue;
-                            }
-                        }
+            while let Ok((len, addr)) = recv_socket.recv_from(&mut buf).await {
+                // Filter out ignored source addresses
+                if let SocketAddr::V4(v4) = addr
+                    && recv_ignored.contains(v4.ip())
+                {
+                    continue;
+                }
 
-                        let data = &buf[..len];
-                        if let Ok(pkt_type) = parse_header(data) {
-                            match pkt_type {
-                                PacketType::DeviceKeepAlive => {
-                                    if let Ok(announcement) = parse_keep_alive(data) {
-                                        let announcements =
-                                            expand_opus_quad_announcement(&announcement);
-                                        let mut map = recv_devices.write().await;
-                                        for ann in announcements {
-                                            let key = ann.number.0;
-                                            let is_new = !map.contains_key(&key);
-                                            map.insert(key, ann.clone());
-                                            let event = if is_new {
-                                                FinderEvent::DeviceFound(ann)
-                                            } else {
-                                                FinderEvent::DeviceUpdated(ann)
-                                            };
-                                            let _ = recv_tx.send(event);
-                                        }
-                                    }
+                let data = &buf[..len];
+                if let Ok(pkt_type) = parse_header(data) {
+                    match pkt_type {
+                        PacketType::DeviceKeepAlive => {
+                            if let Ok(announcement) = parse_keep_alive(data) {
+                                let announcements = expand_opus_quad_announcement(&announcement);
+                                let mut map = recv_devices.write().await;
+                                for ann in announcements {
+                                    let key = ann.number.0;
+                                    let is_new = !map.contains_key(&key);
+                                    map.insert(key, ann.clone());
+                                    let event = if is_new {
+                                        FinderEvent::DeviceFound(ann)
+                                    } else {
+                                        FinderEvent::DeviceUpdated(ann)
+                                    };
+                                    let _ = recv_tx.send(event);
                                 }
-                                PacketType::DeviceDefense => {
-                                    if let Some(dn) = extract_defense_device_number(data) {
-                                        let _ = recv_tx.send(FinderEvent::DefenseReceived {
-                                            device_number: dn,
-                                        });
-                                    }
-                                }
-                                PacketType::DeviceClaimStage2 => {
-                                    if let Some(dn) = extract_claim_stage2_device_number(data) {
-                                        if let SocketAddr::V4(v4) = addr {
-                                            let _ = recv_tx.send(FinderEvent::ClaimReceived {
-                                                device_number: dn,
-                                                source_ip: *v4.ip(),
-                                            });
-                                        }
-                                    }
-                                }
-                                _ => {} // Ignore other packet types on the discovery port
                             }
                         }
+                        PacketType::DeviceDefense => {
+                            if let Some(dn) = extract_defense_device_number(data) {
+                                let _ = recv_tx
+                                    .send(FinderEvent::DefenseReceived { device_number: dn });
+                            }
+                        }
+                        PacketType::DeviceClaimStage2 => {
+                            if let Some(dn) = extract_claim_stage2_device_number(data)
+                                && let SocketAddr::V4(v4) = addr
+                            {
+                                let _ = recv_tx.send(FinderEvent::ClaimReceived {
+                                    device_number: dn,
+                                    source_ip: *v4.ip(),
+                                });
+                            }
+                        }
+                        _ => {} // Ignore other packet types on the discovery port
                     }
-                    Err(_) => break,
                 }
             }
         });
@@ -305,7 +298,9 @@ mod tests {
             }
         }
         if !found_test_cdj {
-            eprintln!("Loopback test: TestCDJ event not received (real hardware may be on network)");
+            eprintln!(
+                "Loopback test: TestCDJ event not received (real hardware may be on network)"
+            );
         }
 
         // Verify device appears in the map (may contain real hardware too)
@@ -315,10 +310,8 @@ mod tests {
         }
 
         // Also test the single-device lookup
-        if found_test_cdj {
-            if let Some(dev) = finder.device(DeviceNumber(7)).await {
-                assert_eq!(dev.name, "TestCDJ");
-            }
+        if found_test_cdj && let Some(dev) = finder.device(DeviceNumber(7)).await {
+            assert_eq!(dev.name, "TestCDJ");
         }
 
         finder.stop();
@@ -415,20 +408,14 @@ mod tests {
         // SO_REUSEPORT may have registered extra devices, so we look for
         // our specific device among all the lost events.
         let mut found_flush_test = false;
-        loop {
-            match tokio::time::timeout(Duration::from_millis(200), rx.recv()).await {
-                Ok(Ok(FinderEvent::DeviceLost(ann))) => {
-                    if ann.name == "FlushTest" {
-                        found_flush_test = true;
-                    }
-                }
-                _ => break,
+        while let Ok(Ok(FinderEvent::DeviceLost(ann))) =
+            tokio::time::timeout(Duration::from_millis(200), rx.recv()).await
+        {
+            if ann.name == "FlushTest" {
+                found_flush_test = true;
             }
         }
-        assert!(
-            found_flush_test,
-            "expected DeviceLost for FlushTest device"
-        );
+        assert!(found_flush_test, "expected DeviceLost for FlushTest device");
 
         finder.stop();
     }

@@ -1,4 +1,4 @@
-use crate::device::types::{Bpm, DeviceNumber, TrackSourceSlot, TrackType, SlotReference};
+use crate::device::types::{Bpm, DeviceNumber, SlotReference, TrackSourceSlot, TrackType};
 
 /// A searchable item with both a database ID and display label.
 /// Used for artist, album, genre, key, label, original artist, and remixer.

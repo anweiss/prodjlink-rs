@@ -130,7 +130,7 @@ pub fn time_to_half_frame(ms: u64) -> u32 {
 
 /// Convert milliseconds to half-frame position (rounded up).
 pub fn time_to_half_frame_rounded(ms: u64) -> u32 {
-    ((ms * 15 + 99) / 100) as u32
+    (ms * 15).div_ceil(100) as u32
 }
 
 // --- Phrase colour constants (from Java Util.java) ---

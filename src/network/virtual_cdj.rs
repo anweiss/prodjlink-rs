@@ -19,7 +19,7 @@ use crate::protocol::announce::{
     build_claim_stage1, build_claim_stage2, build_claim_stage3, build_defense, build_device_hello,
     build_keep_alive,
 };
-use crate::protocol::beat::{build_beat, build_on_air, MasterHandoffEvent};
+use crate::protocol::beat::{MasterHandoffEvent, build_beat, build_on_air};
 use crate::protocol::command::{self, FaderAction};
 use crate::protocol::header::{BEAT_PORT, DISCOVERY_PORT, MAGIC_HEADER, STATUS_PORT};
 use crate::protocol::status::{CdjStatusBuilder, CdjStatusFlags, build_cdj_status};
@@ -208,13 +208,13 @@ impl VirtualCdj {
     /// Optionally checks the DeviceFinder for number conflicts before claiming.
     pub async fn start(config: VirtualCdjConfig, finder: Option<&DeviceFinder>) -> Result<Self> {
         // Check for device number conflicts
-        if let Some(finder) = finder {
-            if let Some(existing) = finder.device(config.device_number).await {
-                return Err(ProDjLinkError::Parse(format!(
-                    "device number {} already in use by {}",
-                    config.device_number, existing.name
-                )));
-            }
+        if let Some(finder) = finder
+            && let Some(existing) = finder.device(config.device_number).await
+        {
+            return Err(ProDjLinkError::Parse(format!(
+                "device number {} already in use by {}",
+                config.device_number, existing.name
+            )));
         }
 
         // Look up the real MAC from the network interface; fall back to a
@@ -457,24 +457,24 @@ impl VirtualCdj {
         }
 
         // Check if the current master is yielding to us
-        if let Some(target) = status.master_hand_off {
-            if target == self.config.device_number.0 {
-                self.tempo_master
-                    .on_master_yielded_to_us(status.device_number);
+        if let Some(target) = status.master_hand_off
+            && target == self.config.device_number.0
+        {
+            self.tempo_master
+                .on_master_yielded_to_us(status.device_number);
 
-                // Auto-accept: send master_command and become master
-                let mut state = self.handoff.lock().await;
-                if state.auto_negotiate {
-                    let packet = command::build_master_command(self.config.device_number);
-                    let addr = SocketAddr::new(
-                        Ipv4Addr::BROADCAST.into(),
-                        BEAT_PORT,
-                    );
-                    let _ = self.beat_socket.send_to(&packet, addr).await;
-                    self.tempo_master.set_we_are_master(status.bpm);
-                    state.phase = HandoffPhase::Idle;
-                    debug!(device = self.config.device_number.0, "auto-accepted master yield");
-                }
+            // Auto-accept: send master_command and become master
+            let mut state = self.handoff.lock().await;
+            if state.auto_negotiate {
+                let packet = command::build_master_command(self.config.device_number);
+                let addr = SocketAddr::new(Ipv4Addr::BROADCAST.into(), BEAT_PORT);
+                let _ = self.beat_socket.send_to(&packet, addr).await;
+                self.tempo_master.set_we_are_master(status.bpm);
+                state.phase = HandoffPhase::Idle;
+                debug!(
+                    device = self.config.device_number.0,
+                    "auto-accepted master yield"
+                );
             }
         }
 
@@ -510,11 +510,11 @@ impl VirtualCdj {
                 .on_device_is_master(status.device_number, status.bpm);
         }
 
-        if let Some(target) = status.master_hand_off {
-            if target == self.config.device_number.0 {
-                self.tempo_master
-                    .on_master_yielded_to_us(status.device_number);
-            }
+        if let Some(target) = status.master_hand_off
+            && target == self.config.device_number.0
+        {
+            self.tempo_master
+                .on_master_yielded_to_us(status.device_number);
         }
     }
 
@@ -549,15 +549,15 @@ impl VirtualCdj {
     /// we complete the handoff by resigning master.
     pub async fn process_master_handoff(&self, event: &MasterHandoffEvent) {
         let mut state = self.handoff.lock().await;
-        if let HandoffPhase::Yielding { target } = state.phase {
-            if target == event.device_number {
-                self.tempo_master.resign_master();
-                state.phase = HandoffPhase::Idle;
-                debug!(
-                    device = event.device_number.0,
-                    "master handoff complete — resigned master"
-                );
-            }
+        if let HandoffPhase::Yielding { target } = state.phase
+            && target == event.device_number
+        {
+            self.tempo_master.resign_master();
+            state.phase = HandoffPhase::Idle;
+            debug!(
+                device = event.device_number.0,
+                "master handoff complete — resigned master"
+            );
         }
     }
 
@@ -754,10 +754,10 @@ impl VirtualCdj {
             task.abort();
         }
         // Abort status task if running.
-        if let Ok(mut guard) = self.status_task.try_lock() {
-            if let Some(h) = guard.take() {
-                h.abort();
-            }
+        if let Ok(mut guard) = self.status_task.try_lock()
+            && let Some(h) = guard.take()
+        {
+            h.abort();
         }
     }
 
@@ -904,6 +904,7 @@ impl VirtualCdj {
 /// Sends the hello → stage 1 → stage 2 → stage 3 packet series on the
 /// broadcast address, checking for defense packets between each send.
 /// Returns `Err(DeviceNumberInUse)` if another device defends the number.
+#[allow(clippy::too_many_arguments)]
 async fn run_claim_protocol(
     socket: &UdpSocket,
     finder: &DeviceFinder,
@@ -1098,15 +1099,10 @@ fn spawn_command_listener(tx: broadcast::Sender<CommandEvent>) -> Option<JoinHan
 
     Some(tokio::spawn(async move {
         let mut buf = [0u8; 4096];
-        loop {
-            match socket.recv_from(&mut buf).await {
-                Ok((len, _)) => {
-                    let data = &buf[..len];
-                    if let Some(event) = try_parse_command(data) {
-                        let _ = tx.send(event);
-                    }
-                }
-                Err(_) => break,
+        while let Ok((len, _)) = socket.recv_from(&mut buf).await {
+            let data = &buf[..len];
+            if let Some(event) = try_parse_command(data) {
+                let _ = tx.send(event);
             }
         }
     }))

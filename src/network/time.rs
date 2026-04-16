@@ -47,13 +47,14 @@ impl PlayerPosition {
     /// After calling, `self.position_ms` reflects the interpolated position
     /// at `now`, and `self.timestamp` is reset to `now`.
     fn snap_forward(&mut self, now: Instant) {
-        if self.playing && self.pitch_multiplier > 0.0 {
-            if let Some(elapsed) = now.checked_duration_since(self.timestamp) {
-                let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
-                if elapsed_ms > 0.0 {
-                    let new_pos = self.position_ms as f64 + elapsed_ms * self.pitch_multiplier;
-                    self.position_ms = new_pos.max(0.0) as u64;
-                }
+        if self.playing
+            && self.pitch_multiplier > 0.0
+            && let Some(elapsed) = now.checked_duration_since(self.timestamp)
+        {
+            let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+            if elapsed_ms > 0.0 {
+                let new_pos = self.position_ms as f64 + elapsed_ms * self.pitch_multiplier;
+                self.position_ms = new_pos.max(0.0) as u64;
             }
         }
         self.timestamp = now;
@@ -569,7 +570,7 @@ mod tests {
         // At 1.06× for ~100 ms → expect ~106 ms of advancement.
         // Allow generous tolerance because sleep is imprecise.
         assert!(
-            pos >= 80 && pos <= 200,
+            (80..=200).contains(&pos),
             "position {pos} should reflect ~1.06× speed over ~100 ms"
         );
     }

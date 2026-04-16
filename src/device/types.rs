@@ -319,20 +319,15 @@ pub enum OnAirStatus {
 /// The Opus Quad appears as a single device on the network but exposes 4
 /// internal players.  Depending on the chosen mode the virtual CDJ will
 /// participate differently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum OpusQuadMode {
     /// Normal mode — we claim a device number and participate in the network.
+    #[default]
     Normal,
     /// Lighting mode — we act as a rekordbox-lighting proxy (device number 0x11 / 17).
     Lighting,
     /// Direct database access via SQLite — no network participation needed for metadata.
     DirectDatabase,
-}
-
-impl Default for OpusQuadMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl OpusQuadMode {

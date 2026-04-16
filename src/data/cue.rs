@@ -1079,6 +1079,7 @@ mod tests {
 
     /// Build a minimal Nxs2 entry. Positions are in milliseconds, little-endian.
     /// `extra` is appended after the 0x48-byte fixed region.
+    #[allow(clippy::too_many_arguments)]
     fn make_nxs2_entry(
         hot_cue: u8,
         cue_flag: u8,

@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(args[2].as_number().unwrap(), 100); // rekordbox_id
 
         // Also verify the direct field building for non-metadata requests
-        let direct_args = vec![
+        let direct_args = [
             Field::number(MENU_ID_DATA as u32),
             Field::number(u8::from(data_ref.slot) as u32),
             Field::number(data_ref.rekordbox_id),

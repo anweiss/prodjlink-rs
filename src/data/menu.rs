@@ -10,8 +10,10 @@ use crate::error::Result;
 /// Pioneer dbserver protocol (originally in Java's `Message.java`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum SortOrder {
     /// Natural / default ordering.
+    #[default]
     Default = 0,
     Album = 1,
     Artist = 2,
@@ -31,12 +33,6 @@ impl SortOrder {
     /// Return the protocol-level numeric value for this sort order.
     pub fn to_protocol_value(self) -> u32 {
         self as u32
-    }
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        SortOrder::Default
     }
 }
 

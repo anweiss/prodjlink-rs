@@ -314,6 +314,7 @@ mod tests {
 
     /// Build a minimal valid media details response packet with the given
     /// fields pre-filled.
+    #[allow(clippy::too_many_arguments)]
     fn make_media_details_packet(
         player: u8,
         slot: u8,
